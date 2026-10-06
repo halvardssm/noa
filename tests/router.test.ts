@@ -241,7 +241,7 @@ Deno.test("cascade: forced claude without configuration names its key", async ()
     verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
   });
   const error = await assertRejects(
-    () => cascade("q", { ...deps, forcedTier: "claude" }),
+    () => cascade("q", { ...deps, forced: { kind: "cloud", provider: "claude" } }),
     Error,
   );
   assert(error.message.includes("claude is not configured"));
@@ -296,7 +296,7 @@ Deno.test("cascade: forced tier skips verification", async () => {
     local2: ["forced answer"],
     verify: [JSON.stringify({ verdict: "FAIL", reason: "should not run" })],
   });
-  const answer = await cascade("q", { ...deps, forcedTier: "local2" });
+  const answer = await cascade("q", { ...deps, forced: { kind: "tier", tier: "local2" } });
   assertEquals(answer, "forced answer");
   assert(!fx.logs.some((l) => l.includes("verdict")));
 });
@@ -438,4 +438,78 @@ Deno.test("cascade: a failing judge falls back to the raw question", async () =>
   const answer = await cascade("raw question", deps2);
   assertEquals(answer, "judge is down answer");
   assert(fx.logs.some((l) => l.includes("judge failed") && l.includes("raw question")));
+});
+
+Deno.test("cascade: a forced model tag answers directly, bypassing judge and verify", async () => {
+  const { fx, deps } = fixture({
+    judge: [judgmentJson("local1", "improved")],
+    local1: ["should not run"],
+    verify: [JSON.stringify({ verdict: "FAIL", reason: "should not run" })],
+  });
+  const answer = await cascade("the raw question", {
+    ...deps,
+    chatForModel: (model) => async () => ({
+      content: `${model} answers`,
+      toolCalls: [],
+    }),
+    forced: { kind: "model", model: "qwen3:4b" },
+  });
+  assertEquals(answer, "qwen3:4b answers");
+  assert(fx.logs.some((l) => l.includes("forced: qwen3:4b")));
+  assert(!fx.logs.some((l) => l.includes("judge:")));
+  assert(!fx.logs.some((l) => l.includes("verify")));
+});
+
+Deno.test("cascade: a forced cloud model receives the raw question", async () => {
+  const prompts: string[] = [];
+  const { deps } = fixture({
+    judge: [judgmentJson("local1", "improved")],
+    local1: ["never"],
+    verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
+  });
+  const answer = await cascade("the raw question", {
+    ...deps,
+    clouds: [{
+      name: "mistral",
+      keySetting: "MISTRAL_API_KEY",
+      chat: (prompt) => {
+        prompts.push(prompt);
+        return Promise.resolve("cloud answer");
+      },
+    }],
+    forced: { kind: "cloud", provider: "mistral" },
+  });
+  assertEquals(answer, "cloud answer");
+  assertEquals(prompts, ["the raw question"]);
+});
+
+Deno.test("cascade: a forced tier still validates configuration", async () => {
+  const { deps } = fixture({
+    judge: [judgmentJson("local1", "improved")],
+    local1: ["answer"],
+    verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
+  });
+  const error = await assertRejects(
+    () => cascade("q", { ...deps, forced: { kind: "tier", tier: "local2" } }),
+    Error,
+  );
+  assert(error.message.includes("local2 is not configured"));
+});
+
+Deno.test("cascade: a forced model with no answer errors clearly", async () => {
+  const { deps } = fixture({
+    judge: [judgmentJson("local1", "improved")],
+    local1: ["answer"],
+    verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
+  });
+  const error = await assertRejects(
+    () =>
+      cascade("q", {
+        ...deps,
+        chatForModel: () => async () => ({ content: "", toolCalls: [] }),
+        forced: { kind: "model", model: "qwen3:4b" },
+      }),
+    Error,
+    "produced no answer",
+  );
 });

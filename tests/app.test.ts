@@ -142,7 +142,7 @@ Deno.test("app: forced mistral without a key gives the config remedy", async () 
   assert(error.message.includes("noa config set MISTRAL_API_KEY"));
 });
 
-Deno.test("app: mistral configured receives the improved prompt", async () => {
+Deno.test("app: forced mistral receives the raw question (no upgrade steps)", async () => {
   const prompts: string[] = [];
   const fetchFn: FetchFn = async (url, init) => {
     if (String(url).includes("mistral.ai")) {
@@ -163,7 +163,7 @@ Deno.test("app: mistral configured receives the improved prompt", async () => {
   });
   const answer = await app.ask("hard task");
   assertEquals(answer, "cloud answer");
-  assertEquals(prompts, ["improved"]);
+  assertEquals(prompts, ["hard task"]);
 });
 
 Deno.test("app: custom local models are used per tier", async () => {
@@ -302,5 +302,53 @@ Deno.test("app: cloud order follows NOA_CLOUD with only configured providers", a
   });
   const answer = await app.ask("hard task");
   assertEquals(answer, "claude");
-  assertEquals(prompts, ["improved"]);
+  assertEquals(prompts, ["hard task"]);
+});
+
+Deno.test("app: --model with an Ollama tag uses that model directly", async () => {
+  const seen: string[] = [];
+  const fetchFn: FetchFn = async (_url, init) => {
+    const body = JSON.parse((init as RequestInit).body as string);
+    seen.push(body.model);
+    return ollamaBody("direct model answer");
+  };
+  const app = await createApp({
+    env: envWith({}),
+    fileValues: {},
+    model: "qwen3:4b",
+    onLog: () => {},
+    fetchFn,
+  });
+  const answer = await app.ask("the raw question");
+  assertEquals(answer, "direct model answer");
+  assertEquals(seen, ["qwen3:4b"]);
+});
+
+Deno.test("app: forcedTargetOf maps names, tags, tiers, and aliases", async () => {
+  const { forcedTargetOf } = await import("../src/app.ts");
+  assertEquals(forcedTargetOf("ministral-3:8b", "mistral-large-latest", "claude-sonnet-4-5"), {
+    kind: "model",
+    model: "ministral-3:8b",
+  });
+  assertEquals(forcedTargetOf("mistral-large-latest", "mistral-large-latest", "claude-sonnet-4-5"), {
+    kind: "cloud",
+    provider: "mistral",
+  });
+  assertEquals(forcedTargetOf("mistral", "mistral-large-latest", "claude-sonnet-4-5"), {
+    kind: "cloud",
+    provider: "mistral",
+  });
+  assertEquals(forcedTargetOf("claude-sonnet-4-5", "mistral-large-latest", "claude-sonnet-4-5"), {
+    kind: "cloud",
+    provider: "claude",
+  });
+  assertEquals(forcedTargetOf("local2", "mistral-large-latest", "claude-sonnet-4-5"), {
+    kind: "tier",
+    tier: "local2",
+  });
+  assertEquals(forcedTargetOf("local8b", "mistral-large-latest", "claude-sonnet-4-5"), {
+    kind: "tier",
+    tier: "local2",
+  });
+  assertEquals(forcedTargetOf(undefined, "mistral-large-latest", "claude-sonnet-4-5"), undefined);
 });

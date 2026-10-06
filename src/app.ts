@@ -11,7 +11,7 @@ import { ollamaChat } from "./ollama.ts";
 import { anthropicProvider, mistralProvider } from "./cloud.ts";
 import type { Tier } from "./judge.ts";
 import { createGate, type Gate } from "./tools.ts";
-import { cascade, type CascadeDeps, type ChatFn } from "./router.ts";
+import { cascade, type CascadeDeps, type ChatFn, type ForcedTarget } from "./router.ts";
 import type { FetchFn } from "./http.ts";
 import type { ChatMessage, ToolSpec } from "./ollama.ts";
 
@@ -184,13 +184,34 @@ export async function createApp(options: AppOptions): Promise<App> {
     }
   }
 
+  const chatForModel = (model: string): ChatFn =>
+    (messages: readonly ChatMessage[], chatOptions?: {
+      json?: boolean;
+      tools?: readonly ToolSpec[];
+    }) =>
+      ollamaChat({
+        model,
+        messages,
+        json: chatOptions?.json,
+        tools: chatOptions?.tools,
+        fetchFn: options.fetchFn,
+      });
+
+  const mistralModel = options.env.get("NOA_MISTRAL_MODEL") ??
+    stringSetting(options.fileValues, "NOA_MISTRAL_MODEL") ??
+    "mistral-large-latest";
+  const anthropicModel = options.env.get("NOA_ANTHROPIC_MODEL") ??
+    stringSetting(options.fileValues, "NOA_ANTHROPIC_MODEL") ??
+    "claude-sonnet-4-5";
+
   const deps: CascadeDeps = {
     chatFor,
+    chatForModel,
     localTiers: localTiers.order,
     tierDescriptions: localTiers.descriptions,
     gate,
     clouds,
-    forcedTier: forcedTierOf(options.model, options.onLog),
+    forced: forcedTargetOf(options.model, mistralModel, anthropicModel),
     noVerify: options.noVerify,
     onLog: options.onLog,
   };
@@ -203,11 +224,16 @@ export async function createApp(options: AppOptions): Promise<App> {
   };
 }
 
-/** Maps `--model` to a forced tier; warns about unsupported choices. */
-function forcedTierOf(
+/**
+ * Maps `--model` to a forced target: a cloud provider name or model tag, a
+ * positional tier (`localN`, with legacy aliases), or any Ollama model tag.
+ * Forced targets bypass the judge, verification, and the cascade.
+ */
+export function forcedTargetOf(
   model: string | undefined,
-  onLog: (message: string) => void,
-): CascadeDeps["forcedTier"] {
+  mistralModel: string,
+  anthropicModel: string,
+): ForcedTarget | undefined {
   if (model === undefined) return undefined;
   // Old, model-size-derived names still work as aliases onto positions.
   const aliases: Record<string, string> = {
@@ -216,9 +242,12 @@ function forcedTierOf(
     local14b: "local3",
   };
   const tier = aliases[model] ?? model;
-  if (/^local\d+$/.test(tier) || tier === "mistral" || tier === "claude") {
-    return tier;
+  if (/^local\d+$/.test(tier)) return { kind: "tier", tier };
+  if (model === "mistral" || model === mistralModel) {
+    return { kind: "cloud", provider: "mistral" };
   }
-  onLog(`model "${model}" is not supported yet — routing to cloud instead`);
-  return "mistral";
+  if (model === "claude" || model === anthropicModel) {
+    return { kind: "cloud", provider: "claude" };
+  }
+  return { kind: "model", model };
 }

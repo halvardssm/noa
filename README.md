@@ -23,6 +23,7 @@ Flow of every request:
 2. If a local tier is chosen, it attempts the task (with tools, agent-loop style). Its answer is **verified** by a cheap local pass (`PASS`/`FAIL`). The verifier is biased conservative: it must see a clear deficiency (wrong, incomplete, or off-question) to say `FAIL` — uncertainty passes. Verification only runs on local answers; a cloud answer is final (there is nothing left to escalate to) and `--model`-forced tiers skip it.
 3. On failure (or a failed verification), it **escalates**: 3B → 8B → 14B → cloud.
 4. Cloud tiers receive the improved prompt, never the raw one.
+5. `--model` is a hard override: it names one model (an Ollama tag such as `ministral-3:8b`, a `localN` tier, `mistral`/`claude`, or a cloud model tag) and the raw question goes to exactly that model — no judge, no verification, no escalation.
 
 Design principles:
 
@@ -89,8 +90,10 @@ noa config get <KEY>            print a setting (secrets are masked unless --sho
 noa config list                 list all settings (values masked)
 noa config unset <KEY>          remove a setting
 noa <question>                  ask anything — routes automatically
-noa --model <tier> <question>   force: local1 | local2 | local3 | mistral | claude
-                                 (local3b/local8b/local14b still work as aliases)
+noa --model <model> <question>  force one model — no routing, no verification, no escalation.
+                                 Examples (the defaults): ministral-3:3b | ministral-3:8b |
+                                 ministral-3:14b | mistral-large-latest; any Ollama tag,
+                                 localN tier, mistral, or claude also work
 noa --allow-tools <cmd,...>     set the tool allowlist for this invocation (highest precedence;
                                  example: --allow-tools ls,cat,head,tail,wc,grep,find,jq,curl;
                                  persist via noa config set NOA_TOOLS)
@@ -155,7 +158,7 @@ The repo is done when all of these hold:
 - [x] `noa what is 2+2` answers locally on the 3B, in seconds, with stderr showing the tier chosen
 - [ ] A moderate code question routes to 8B; a demanding one routes to 14B
 - [ ] A genuinely hard task cascades upward and, if all local tiers fail verification, reaches Claude or Mistral with the improved (rewritten) prompt — visible in stderr
-- [ ] `--model claude` forces cloud and works
+- [ ] `--model claude` forces cloud and works (code paths unit-tested; needs a live key for full confirmation)
 - [x] With no API keys configured, hard tasks fail gracefully with a clear message (never a stack trace about missing keys mid-cascade)
 
 **Memory**

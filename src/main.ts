@@ -146,7 +146,7 @@ const root = defineCommand({
     model: {
       type: "string",
       description:
-        "force a tier: local1 | local2 | local3 | mistral | claude",
+        "force one model (skips routing, verification, and escalation): ministral-3:3b | ministral-3:8b | ministral-3:14b | mistral-large-latest — or any Ollama tag, localN tier, mistral, claude",
     },
     allowTools: {
       type: "string",

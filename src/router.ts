@@ -33,10 +33,13 @@ export const RUN_COMMAND_TOOL: ToolSpec = {
 };
 
 /**
- * A tier forced by `--model`; skips verification and the cascade.
- * Positional (`local1`..`localN`), a legacy alias, or `mistral`/`claude`.
+ * A model forced by `--model`: bypasses the judge, verification, and the
+ * cascade entirely — the raw question goes to exactly this model.
  */
-export type ForcedTier = string;
+export type ForcedTarget =
+  | { readonly kind: "cloud"; readonly provider: string }
+  | { readonly kind: "tier"; readonly tier: string }
+  | { readonly kind: "model"; readonly model: string };
 
 /** Dependencies of the cascade, injected for testing. */
 export interface CascadeDeps {
@@ -52,8 +55,10 @@ export interface CascadeDeps {
   };
   /** The configured cloud providers, in user-preference order. */
   readonly clouds?: readonly CloudProvider[];
-  /** A tier forced by `--model`; skips verification and the cascade. */
-  readonly forcedTier?: ForcedTier;
+  /** Chat function for a direct Ollama model tag (`--model <tag>`). */
+  readonly chatForModel?: (model: string) => ChatFn;
+  /** The model forced by `--model`; bypasses judge, verify, and cascade. */
+  readonly forced?: ForcedTarget;
   /** Skip the verification pass (`--no-verify`). */
   readonly noVerify?: boolean;
   /** Log sink (stderr in the CLI). */
@@ -74,29 +79,48 @@ export async function cascade(
   deps: CascadeDeps,
 ): Promise<string> {
   const log = deps.onLog ?? (() => {});
-
-  const forcedCloud = deps.forcedTier === "mistral" || deps.forcedTier === "claude"
-    ? deps.forcedTier
-    : undefined;
   const clouds = deps.clouds ?? [];
   const localTiers = deps.localTiers ?? [];
 
-  // Fail fast with the config remedy before anything runs.
-  if (forcedCloud !== undefined && !clouds.some((p) => p.name === forcedCloud)) {
-    const setting = forcedCloud === "claude"
-      ? "ANTHROPIC_API_KEY"
-      : "MISTRAL_API_KEY";
-    throw new Error(
-      `${forcedCloud} is not configured — run \`noa config set ${setting}\``,
-    );
-  }
-  const forcedLocal = deps.forcedTier !== undefined && forcedCloud === undefined
-    ? deps.forcedTier
-    : undefined;
-  if (forcedLocal !== undefined && !localTiers.includes(forcedLocal)) {
-    throw new Error(
-      `${forcedLocal} is not configured — check the models list in config.json or force another tier`,
-    );
+  // A forced model bypasses the judge, verification, and the cascade:
+  // the raw question goes to exactly this model.
+  const forced = deps.forced;
+  if (forced !== undefined) {
+    if (forced.kind === "cloud") {
+      if (!clouds.some((p) => p.name === forced.provider)) {
+        const setting = forced.provider === "claude"
+          ? "ANTHROPIC_API_KEY"
+          : "MISTRAL_API_KEY";
+        throw new Error(
+          `${forced.provider} is not configured — run \`noa config set ${setting}\``,
+        );
+      }
+      log(`forced: cloud ${forced.provider} (raw question, no cascade)`);
+      return cloudChain(question, clouds, forced.provider, log);
+    }
+    let chat: ChatFn;
+    let label: string;
+    if (forced.kind === "tier") {
+      if (!localTiers.includes(forced.tier)) {
+        throw new Error(
+          `${forced.tier} is not configured — check the models list in config.json or force another tier`,
+        );
+      }
+      chat = deps.chatFor(forced.tier);
+      label = forced.tier;
+    } else {
+      if (deps.chatForModel === undefined) {
+        throw new Error("direct model forcing is not available");
+      }
+      chat = deps.chatForModel(forced.model);
+      label = forced.model;
+    }
+    log(`forced: ${label} (raw question, no cascade, no verification)`);
+    const answer = await agentLoop(question, label, chat, deps, log);
+    if (answer === "") {
+      throw new Error(`${label} produced no answer`);
+    }
+    return answer;
   }
 
   // Without any local model there is nothing to judge with: the raw
@@ -104,11 +128,11 @@ export async function cascade(
   if (localTiers.length === 0) {
     if (clouds.length === 0) {
       throw new Error(
-        "no local model is configured and no cloud provider is configured — set NOA_MODEL_LOCAL1 or a cloud API key",
+        "no local model is configured and no cloud provider is configured — add models to config.json or a cloud API key",
       );
     }
     log("no local models configured — routing to cloud with the raw question");
-    return cloudChain(question, clouds, forcedCloud, log);
+    return cloudChain(question, clouds, undefined, log);
   }
 
   let judgment: Judgment;
@@ -136,8 +160,8 @@ export async function cascade(
     `judge: tier=${judgment.tier} reason=${judgment.reason || "(none)"} improved="${judgment.improvedPrompt}"`,
   );
 
-  const plan = planTiers(judgment.tier, deps.forcedTier, localTiers);
-  const verifying = deps.forcedTier === undefined && !deps.noVerify;
+  const plan = planTiers(judgment.tier, localTiers);
+  const verifying = !deps.noVerify;
 
   for (const tier of plan) {
     if (tier === "cloud") {
@@ -146,13 +170,13 @@ export async function cascade(
           "no local model passed verification and no cloud provider is configured — run `noa config set MISTRAL_API_KEY` (or ANTHROPIC_API_KEY)",
         );
       }
-      return cloudChain(judgment.improvedPrompt, clouds, forcedCloud, log);
+      return cloudChain(judgment.improvedPrompt, clouds, undefined, log);
     }
 
     log(`tier: ${tier} (attempting)`);
     let answer: string;
     try {
-      answer = await agentLoop(judgment.improvedPrompt, tier, deps, log);
+      answer = await agentLoop(judgment.improvedPrompt, tier, deps.chatFor(tier), deps, log);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("Ollama is not running")) throw error;
@@ -183,19 +207,16 @@ export async function cascade(
 }
 
 /**
- * The escalation order from the judge's (or forced) starting tier, walking
- * only the configured local tiers. A judged-but-absent tier starts at the
- * bottom; the plan always ends at cloud.
+ * The escalation order from the judge's starting tier, walking only the
+ * configured local tiers. A judged-but-absent tier starts at the bottom;
+ * the plan always ends at cloud.
  */
 export function planTiers(
   judged: Tier,
-  forced: CascadeDeps["forcedTier"],
   localTiers: readonly Tier[],
 ): Tier[] {
-  if (forced === "mistral" || forced === "claude") return ["cloud"];
-  const start = forced ?? judged;
-  if (start === "cloud") return ["cloud"];
-  const startIdx = localTiers.indexOf(start);
+  if (judged === "cloud") return ["cloud"];
+  const startIdx = localTiers.indexOf(judged);
   const chain = startIdx === -1 ? [...localTiers] : localTiers.slice(startIdx);
   chain.push("cloud");
   return chain;
@@ -227,11 +248,11 @@ async function cloudChain(
 
 async function agentLoop(
   prompt: string,
-  tier: Tier,
+  label: string,
+  chat: ChatFn,
   deps: CascadeDeps,
   log: (message: string) => void,
 ): Promise<string> {
-  const chat = deps.chatFor(tier);
   const maxRounds = deps.maxToolRounds ?? 6;
   const messages: ChatMessage[] = [
     { role: "system", content: AGENT_SYSTEM },
@@ -271,6 +292,6 @@ async function agentLoop(
       messages.push({ role: "tool", toolName: call.name, content: result });
     }
   }
-  log(`tier: ${tier} hit the tool-round limit without a final answer`);
+  log(`${label} hit the tool-round limit without a final answer`);
   return "";
 }
