@@ -25,6 +25,14 @@ export interface GateSettings {
   readonly cwd?: string;
   /** Sink for the invocation log (stderr in the CLI). */
   readonly log?: (message: string) => void;
+  /**
+   * Interactive approval for `rm` runs (security rule 4): returns whether
+   * the user approved. When absent, `rm` is always rejected.
+   */
+  readonly approveRm?: (
+    command: string,
+    args: readonly string[],
+  ) => Promise<boolean>;
 }
 
 /** The result of a run command. */
@@ -195,6 +203,18 @@ export async function createGate(settings: GateSettings): Promise<Gate> {
         }
       }
       await screenArgs(command, args);
+      if (base === "rm") {
+        // Rule 4: rm needs interactive approval for every single run —
+        // and approval never overrides the screening above.
+        const approved = settings.approveRm !== undefined &&
+          await settings.approveRm(command, args);
+        if (!approved) {
+          log(`rejected: ${command} ${args.join(" ")} (rm not approved)`);
+          throw new GateError(
+            `"rm" requires interactive approval (retype the exact command) — not approved`,
+          );
+        }
+      }
       log(`run: ${command} ${args.join(" ")}`);
       // There is no shell: expand `~` ourselves, exactly as screened.
       const childArgs = args.map((a) => expandTilde(a, home));

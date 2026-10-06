@@ -36,6 +36,11 @@ export interface AppOptions {
   readonly cwd?: string;
   /** Log sink (stderr in the CLI). */
   readonly onLog: (message: string) => void;
+  /** Interactive `rm` approval; absent means `rm` is always rejected. */
+  readonly approveRm?: (
+    command: string,
+    args: readonly string[],
+  ) => Promise<boolean>;
   /** Fetch implementation for the model providers. */
   readonly fetchFn?: FetchFn;
 }
@@ -91,6 +96,7 @@ export async function createApp(options: AppOptions): Promise<App> {
     homeDir: options.env.get("HOME"),
     cwd: options.cwd,
     log: options.onLog,
+    approveRm: options.approveRm,
   });
 
   const chatFor = (purpose: string): ChatFn =>

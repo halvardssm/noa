@@ -263,6 +263,77 @@ Deno.test("gate: expands ~ in arguments for the child (no shell)", async () => {
   }
 });
 
+Deno.test("gate: rm requires approval even when allowlisted — wrong retype rejected", async () => {
+  const ws = await tempWorkspace();
+  try {
+    await Deno.writeTextFile(`${ws.dir}/notes.txt`, "x");
+    const approvals: string[] = [];
+    const gate = await createGate({
+      allowTools: ["rm"],
+      allowPaths: [ws.dir],
+      homeDir: HOME,
+      approveRm: (command, args) => {
+        approvals.push(`${command} ${args.join(" ")}`);
+        // Simulate the user typing "y" instead of the exact command.
+        return Promise.resolve(false);
+      },
+    });
+    await assertRejects(
+      () => gate.run("rm", [`${ws.dir}/notes.txt`]),
+      Error,
+      "not approved",
+    );
+    assertEquals(approvals.length, 1);
+  } finally {
+    await ws.cleanup();
+  }
+});
+
+Deno.test("gate: rm with approval runs and stays screened", async () => {
+  const ws = await tempWorkspace();
+  const outside = await Deno.makeTempFile({ prefix: "noa-outside-" });
+  try {
+    await Deno.writeTextFile(`${ws.dir}/notes.txt`, "x");
+    const gate = await createGate({
+      allowTools: ["rm"],
+      allowPaths: [ws.dir],
+      homeDir: HOME,
+      approveRm: () => Promise.resolve(true),
+    });
+    // Approved for a file inside the allowed paths.
+    const result = await gate.run("rm", [`${ws.dir}/notes.txt`]);
+    assertEquals(result.code, 0);
+    // Approval can never override path screening: this is rejected
+    // before any approval prompt.
+    await assertRejects(
+      () => gate.run("rm", [outside]),
+      Error,
+      "outside the allowed paths",
+    );
+  } finally {
+    await ws.cleanup();
+    await Deno.remove(outside);
+  }
+});
+
+Deno.test("gate: rm without an approval callback is always rejected", async () => {
+  const ws = await tempWorkspace();
+  try {
+    const gate = await createGate({
+      allowTools: ["rm"],
+      allowPaths: [ws.dir],
+      homeDir: HOME,
+    });
+    await assertRejects(
+      () => gate.run("rm", [`${ws.dir}/notes.txt`]),
+      Error,
+      "not approved",
+    );
+  } finally {
+    await ws.cleanup();
+  }
+});
+
 Deno.test("expandTilde: expands ~ and ~/x with the given home", () => {
   assertEquals(expandTilde("~", "/home/u"), "/home/u");
   assertEquals(expandTilde("~/dev/x", "/home/u"), "/home/u/dev/x");

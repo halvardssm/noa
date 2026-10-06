@@ -138,6 +138,7 @@ const root = defineCommand({
       allowPathsFlag: context.flags.allowPaths,
       model: context.flags.model,
       noVerify: context.flags.noVerify,
+      approveRm: interactiveRmApproval,
       onLog: stderrLine,
     });
 
@@ -145,6 +146,21 @@ const root = defineCommand({
     context.stdout(answer);
   },
 });
+
+/**
+ * Interactive `rm` approval (security rule 4): the exact command must be
+ * retyped; anything else — including "y" — rejects. Non-interactive stdin
+ * can never approve.
+ */
+async function interactiveRmApproval(
+  command: string,
+  args: readonly string[],
+): Promise<boolean> {
+  if (!Deno.stdin.isTerminal()) return false;
+  const full = [command, ...args].join(" ");
+  const typed = await promptSecret(`To approve, retype exactly: ${full}`) ?? "";
+  return typed.trim() === full;
+}
 
 if (import.meta.main) {
   try {
