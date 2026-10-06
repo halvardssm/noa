@@ -109,3 +109,10 @@ Deno.test("cli: a question without ollama fails with a clear message", async () 
     assert(result.stderr.includes("Ollama is not running"));
   });
 });
+
+Deno.test("cli: setup refuses non-interactive stdin with instructions", async () => {
+  const result = await runCli(["setup"]);
+  assert(result.code !== 0);
+  assert(result.stderr.includes("interactive"));
+  assert(result.stderr.includes("ollama pull"));
+});

@@ -10,8 +10,36 @@ import {
   unsetEnvValue,
 } from "./config.ts";
 import { createApp } from "./app.ts";
+import { runSetup, type SetupInteract } from "./setup.ts";
 
 const VERSION = "0.1.0";
+
+/** Terminal-backed setup interaction. */
+const terminalInteract: SetupInteract = {
+  confirm: async (message) => {
+    const answer = await promptSecret(`${message} [y/N]`) ?? "";
+    return /^(y|yes)$/i.test(answer.trim());
+  },
+  secret: (message) => promptSecret(`${message}`),
+};
+
+const setup = defineCommand({
+  name: "setup",
+  description: "Interactive first-time setup (models, memory cap, API keys)",
+  async run(context) {
+    if (!Deno.stdin.isTerminal()) {
+      throw new UsageError(
+        "noa setup is interactive — run it in a terminal (or pull models directly: ollama pull ministral-3:3b)",
+      );
+    }
+    const code = await runSetup({
+      env: Deno.env,
+      interact: terminalInteract,
+      out: (line) => context.stdout(line),
+    });
+    return code;
+  },
+});
 
 const configSet = defineCommand({
   name: "set",
@@ -85,7 +113,8 @@ const config = defineCommand({
 const root = defineCommand({
   name: "noa",
   version: VERSION,
-  description: "Local-first AI CLI: the smallest sufficient model answers.",
+  description:
+    "Local-first AI CLI: the smallest sufficient model answers. (Also: noa setup, noa config ...)",
   options: {
     model: {
       type: "string",
@@ -169,6 +198,8 @@ if (import.meta.main) {
     const args = Deno.args;
     const code = args[0] === "config"
       ? await runCommand(config, args.slice(1))
+      : args[0] === "setup"
+      ? await runCommand(setup, args.slice(1))
       : await runCommand(root, args);
     Deno.exit(code);
   } catch (error) {

@@ -55,6 +55,8 @@ interface OllamaChatOptions {
   readonly json?: boolean;
   /** Context window; defaults to 8192 to cap memory (spec: pinned 8k). */
   readonly numCtx?: number;
+  /** Idle time before Ollama unloads the model; defaults to 5m (spec). */
+  readonly keepAlive?: string;
   readonly fetchFn?: FetchFn;
   readonly baseUrl?: string;
 }
@@ -94,6 +96,7 @@ export async function ollamaChat(
   }
   if (options.json) body.format = "json";
   body.options = { num_ctx: options.numCtx ?? 8192 };
+  body.keep_alive = options.keepAlive ?? "5m";
 
   let response;
   try {
