@@ -146,7 +146,12 @@ const root = defineCommand({
     model: {
       type: "string",
       description:
-        "force one model (skips routing, verification, and escalation): ministral-3:3b | ministral-3:8b | ministral-3:14b | mistral-large-latest — or any Ollama tag, localN tier, mistral, claude",
+        "force one model (skips routing, verification, and escalation): an Ollama tag — e.g. ministral-3:3b | ministral-3:8b | ministral-3:14b — or a localN tier; for cloud models, pass --provider",
+    },
+    provider: {
+      type: "string",
+      description:
+        "cloud provider for --model: mistral | claude (uses the provider's default model when --model is unset)",
     },
     allowTools: {
       type: "string",
@@ -195,6 +200,7 @@ const root = defineCommand({
       allowToolsFlag: context.flags.allowTools,
       allowPathsFlag: context.flags.allowPaths,
       model: context.flags.model,
+      provider: context.flags.provider,
       noVerify: context.flags.noVerify,
       approveRm: interactiveRmApproval,
       onLog: stderrLine,

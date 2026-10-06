@@ -36,19 +36,35 @@ export const RUN_COMMAND_TOOL: ToolSpec = {
  * A model forced by `--model`: bypasses the judge, verification, and the
  * cascade entirely — the raw question goes to exactly this model.
  */
+/** Where a tier's model is served: Ollama or a cloud provider. */
+export interface TierTarget {
+  /** `"ollama"`, `"mistral"`, or `"claude"`. */
+  readonly provider: string;
+  /** The model tag on that provider. */
+  readonly model: string;
+}
+
+/**
+ * A model forced by `--model`/`--provider`: bypasses the judge,
+ * verification, and the cascade — the raw question goes to exactly this
+ * model. `--model` without `--provider` is always an Ollama tag (or a
+ * `localN` tier); `--provider` names the cloud provider for the model.
+ */
 export type ForcedTarget =
-  | { readonly kind: "cloud"; readonly provider: string }
+  | { readonly kind: "cloud"; readonly provider: string; readonly model?: string }
   | { readonly kind: "tier"; readonly tier: string }
   | { readonly kind: "model"; readonly model: string };
 
 /** Dependencies of the cascade, injected for testing. */
 export interface CascadeDeps {
-  /** Chat function per purpose: `judge`, `verify`, or a tier name. */
+  /** Chat function per purpose: `judge`, `verify`, or an Ollama tier name. */
   readonly chatFor: (purpose: string) => ChatFn;
-  /** The configured local tiers in escalation order (user-defined models). */
+  /** The configured tiers in escalation order (user-defined models). */
   readonly localTiers: readonly Tier[];
   /** The user's description per tier, fed to the judge prompt. */
   readonly tierDescriptions?: Readonly<Record<string, string>>;
+  /** Which provider and model serves each tier (unset provider = Ollama). */
+  readonly tierTargets?: Readonly<Record<string, TierTarget>>;
   /** The execution gate the agent loop runs commands through. */
   readonly gate: {
     run(command: string, args: readonly string[]): Promise<RunResult>;
@@ -87,7 +103,8 @@ export async function cascade(
   const forced = deps.forced;
   if (forced !== undefined) {
     if (forced.kind === "cloud") {
-      if (!clouds.some((p) => p.name === forced.provider)) {
+      const provider = clouds.find((p) => p.name === forced.provider);
+      if (provider === undefined) {
         const setting = forced.provider === "claude"
           ? "ANTHROPIC_API_KEY"
           : "MISTRAL_API_KEY";
@@ -95,8 +112,9 @@ export async function cascade(
           `${forced.provider} is not configured — run \`noa config set ${setting}\``,
         );
       }
-      log(`forced: cloud ${forced.provider} (raw question, no cascade)`);
-      return cloudChain(question, clouds, forced.provider, log);
+      const model = forced.model !== undefined ? ` ${forced.model}` : "";
+      log(`forced: ${forced.provider}${model} (raw question, no cascade)`);
+      return provider.chat(question, forced.model);
     }
     let chat: ChatFn;
     let label: string;
@@ -123,8 +141,13 @@ export async function cascade(
     return answer;
   }
 
-  // Without any local model there is nothing to judge with: the raw
-  // question goes straight to cloud (the improved prompt needs the judge).
+  const targets = deps.tierTargets ?? {};
+  const ollamaTiers = localTiers.filter((tier) =>
+    targets[tier] === undefined || targets[tier].provider === "ollama"
+  );
+
+  // Without any Ollama model there is nothing to judge with: the raw
+  // question goes to cloud (the improved prompt needs the judge).
   if (localTiers.length === 0) {
     if (clouds.length === 0) {
       throw new Error(
@@ -136,31 +159,47 @@ export async function cascade(
   }
 
   let judgment: Judgment;
-  try {
-    judgment = await judge(question, {
-      chat: deps.chatFor("judge"),
-      tiers: localTiers.map((name): TierInfo => ({
-        name,
-        description: deps.tierDescriptions?.[name],
-      })),
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("Ollama is not running")) throw error;
-    // The judge's model is unavailable: route the raw question through the
-    // smallest configured tier and keep going.
-    log(`judge failed (${message}) — falling back to the raw question`);
+  if (ollamaTiers.length === 0) {
+    // Only cloud models configured: judging would cost money per request;
+    // walk the whole cascade with the raw question instead.
+    log("no ollama models configured — skipping the judge");
     judgment = {
       tier: localTiers[0],
-      reason: "judge unavailable",
+      reason: "no ollama judge",
       improvedPrompt: question,
     };
+  } else {
+    try {
+      judgment = await judge(question, {
+        chat: deps.chatFor("judge"),
+        tiers: localTiers.map((name): TierInfo => ({
+          name,
+          description: deps.tierDescriptions?.[name],
+        })),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Ollama is not running")) throw error;
+      // The judge's model is unavailable: route the raw question through the
+      // smallest configured tier and keep going.
+      log(`judge failed (${message}) — falling back to the raw question`);
+      judgment = {
+        tier: localTiers[0],
+        reason: "judge unavailable",
+        improvedPrompt: question,
+      };
+    }
   }
   log(
     `judge: tier=${judgment.tier} reason=${judgment.reason || "(none)"} improved="${judgment.improvedPrompt}"`,
   );
 
-  const plan = planTiers(judgment.tier, localTiers);
+  // The implicit final cloud tier only exists when no configured tier is a
+  // cloud model — otherwise the user's list already ends wherever they chose.
+  const hasCloudTier = localTiers.some((tier) => targets[tier] !== undefined &&
+    targets[tier].provider !== "ollama"
+  );
+  const plan = planTiers(judgment.tier, localTiers, !hasCloudTier);
   const verifying = !deps.noVerify;
 
   for (const tier of plan) {
@@ -173,17 +212,43 @@ export async function cascade(
       return cloudChain(judgment.improvedPrompt, clouds, undefined, log);
     }
 
-    log(`tier: ${tier} (attempting)`);
+    const target = targets[tier];
     let answer: string;
-    try {
-      answer = await agentLoop(judgment.improvedPrompt, tier, deps.chatFor(tier), deps, log);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("Ollama is not running")) throw error;
-      // A broken tier (model missing, HTTP error) escalates rather than
-      // crashing the whole request.
-      log(`tier: ${tier} failed (${message}) — escalating`);
-      continue;
+    if (target !== undefined && target.provider !== "ollama") {
+      // A cloud model inside the user's cascade: answered by its provider.
+      const provider = clouds.find((p) => p.name === target.provider);
+      if (provider === undefined) {
+        log(
+          `tier: ${tier} needs ${target.provider}, which is not configured — escalating`,
+        );
+        continue;
+      }
+      log(`tier: ${tier} via ${target.provider} ${target.model} (attempting)`);
+      try {
+        answer = await provider.chat(judgment.improvedPrompt, target.model);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`tier: ${tier} failed (${message}) — escalating`);
+        continue;
+      }
+    } else {
+      log(`tier: ${tier} (attempting)`);
+      try {
+        answer = await agentLoop(
+          judgment.improvedPrompt,
+          tier,
+          deps.chatFor(tier),
+          deps,
+          log,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("Ollama is not running")) throw error;
+        // A broken tier (model missing, HTTP error) escalates rather than
+        // crashing the whole request.
+        log(`tier: ${tier} failed (${message}) — escalating`);
+        continue;
+      }
     }
     if (answer === "") {
       log(`tier: ${tier} produced no answer (escalating)`);
@@ -208,17 +273,19 @@ export async function cascade(
 
 /**
  * The escalation order from the judge's starting tier, walking only the
- * configured local tiers. A judged-but-absent tier starts at the bottom;
- * the plan always ends at cloud.
+ * configured local tiers. A judged-but-absent tier starts at the bottom.
+ * The implicit final cloud tier is appended only when the user's cascade
+ * contains no cloud model of its own.
  */
 export function planTiers(
   judged: Tier,
   localTiers: readonly Tier[],
+  appendCloud = true,
 ): Tier[] {
-  if (judged === "cloud") return ["cloud"];
+  if (judged === "cloud") return appendCloud ? ["cloud"] : [...localTiers];
   const startIdx = localTiers.indexOf(judged);
   const chain = startIdx === -1 ? [...localTiers] : localTiers.slice(startIdx);
-  chain.push("cloud");
+  if (appendCloud) chain.push("cloud");
   return chain;
 }
 

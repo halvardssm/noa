@@ -8,8 +8,8 @@ export interface CloudProvider {
   readonly name: string;
   /** The .env setting that must exist for this provider to be configured. */
   readonly keySetting: string;
-  /** Answers the improved prompt. */
-  chat(prompt: string): Promise<string>;
+  /** Answers the prompt; `model` overrides the provider's default. */
+  chat(prompt: string, model?: string): Promise<string>;
 }
 
 /** Error carrying a user-facing remedy, without a stack trace. */
@@ -86,7 +86,7 @@ export function mistralProvider(config: MistralConfig): CloudProvider {
   return {
     name: "mistral",
     keySetting: "MISTRAL_API_KEY",
-    chat: (prompt) => mistralChat({ ...config, prompt }),
+    chat: (prompt, model) => mistralChat({ ...config, prompt, model }),
   };
 }
 
@@ -154,6 +154,6 @@ export function anthropicProvider(config: AnthropicConfig): CloudProvider {
   return {
     name: "claude",
     keySetting: "ANTHROPIC_API_KEY",
-    chat: (prompt) => anthropicChat({ ...config, prompt }),
+    chat: (prompt, model) => anthropicChat({ ...config, prompt, model }),
   };
 }

@@ -10,36 +10,42 @@ import {
 import { ollamaChat } from "./ollama.ts";
 import { anthropicProvider, mistralProvider } from "./cloud.ts";
 import type { Tier } from "./judge.ts";
+import type { TierTarget } from "./router.ts";
 import { createGate, type Gate } from "./tools.ts";
 import { cascade, type CascadeDeps, type ChatFn, type ForcedTarget } from "./router.ts";
 import type { FetchFn } from "./http.ts";
 import type { ChatMessage, ToolSpec } from "./ollama.ts";
 
-/** The local tiers and their user-configured models. */
+/** The tiers of the user's cascade and their models. */
 export interface LocalTiers {
   /** Tier names in escalation order: `local1`..`localN`. */
   readonly order: readonly Tier[];
-  /** Tier -> Ollama model name. */
-  readonly models: Readonly<Record<string, string>>;
   /** Tier -> the user's description of what the model is for. */
   readonly descriptions: Readonly<Record<string, string>>;
+  /** Tier -> provider and model (unset provider means Ollama). */
+  readonly targets: Readonly<Record<string, TierTarget>>;
 }
 
 /**
  * Maps the user's ordered model list onto positional tiers: position is
- * the escalation order, the first entry is the always-warm judge/verifier.
+ * the escalation order, the first Ollama entry is the judge/verifier.
+ * A `provider` on an entry routes that tier to a cloud model.
  */
 export function resolveLocalTiers(
   models: readonly ModelEntry[],
 ): LocalTiers {
   const order: Tier[] = models.map((_, index) => `local${index + 1}`);
-  const modelMap: Record<string, string> = {};
   const descriptions: Record<string, string> = {};
+  const targets: Record<string, TierTarget> = {};
   models.forEach((entry, index) => {
-    modelMap[order[index]] = entry.model;
-    if (entry.description !== undefined) descriptions[order[index]] = entry.description;
+    const tier = order[index];
+    if (entry.description !== undefined) descriptions[tier] = entry.description;
+    targets[tier] = {
+      provider: entry.provider ?? "ollama",
+      model: entry.model,
+    };
   });
-  return { order, models: modelMap, descriptions };
+  return { order, descriptions, targets };
 }
 
 /** Options for {@linkcode createApp}. */
@@ -52,8 +58,10 @@ export interface AppOptions {
   readonly allowToolsFlag?: string;
   /** `--allow-paths` flag. */
   readonly allowPathsFlag?: string;
-  /** `--model` flag: local3b | local8b | local14b | mistral | claude. */
+  /** `--model` flag: an Ollama tag or a `localN` tier (Ollama-only without --provider). */
   readonly model?: string;
+  /** `--provider` flag: the cloud provider for `--model` (mistral | claude). */
+  readonly provider?: string;
   /** `--no-verify`. */
   readonly noVerify?: boolean;
   /** Working directory; the default allowed path. Defaults to cwd. */
@@ -124,8 +132,11 @@ export async function createApp(options: AppOptions): Promise<App> {
   });
 
   const localTiers = resolveLocalTiers(resolveModels(options.fileValues));
-  const firstModel = localTiers.order.length > 0
-    ? localTiers.models[localTiers.order[0]]
+  const firstOllama = localTiers.order.find((tier) =>
+    localTiers.targets[tier].provider === "ollama"
+  );
+  const judgeModel = firstOllama !== undefined
+    ? localTiers.targets[firstOllama].model
     : undefined;
 
   const chatFor = (purpose: string): ChatFn =>
@@ -133,14 +144,16 @@ export async function createApp(options: AppOptions): Promise<App> {
       json?: boolean;
       tools?: readonly ToolSpec[];
     }) => {
-      // `judge` and `verify` run on the first (smallest) configured model;
-      // tier purposes resolve to that tier's user-configured model.
+      // `judge` and `verify` run on the first Ollama model in the cascade;
+      // tier purposes resolve to that tier's Ollama model.
       const model = purpose === "judge" || purpose === "verify"
-        ? firstModel
-        : localTiers.models[purpose];
+        ? judgeModel
+        : localTiers.targets[purpose]?.provider === "ollama"
+        ? localTiers.targets[purpose].model
+        : undefined;
       if (model === undefined) {
         throw new Error(
-          `no model configured for "${purpose}" — add models to config.json`,
+          `no ollama model configured for "${purpose}" — add models to config.json`,
         );
       }
       return ollamaChat({
@@ -209,9 +222,15 @@ export async function createApp(options: AppOptions): Promise<App> {
     chatForModel,
     localTiers: localTiers.order,
     tierDescriptions: localTiers.descriptions,
+    tierTargets: localTiers.targets,
     gate,
     clouds,
-    forced: forcedTargetOf(options.model, mistralModel, anthropicModel),
+    forced: forcedTargetOf(
+      options.model,
+      options.provider,
+      mistralModel,
+      anthropicModel,
+    ),
     noVerify: options.noVerify,
     onLog: options.onLog,
   };
@@ -225,15 +244,33 @@ export async function createApp(options: AppOptions): Promise<App> {
 }
 
 /**
- * Maps `--model` to a forced target: a cloud provider name or model tag, a
- * positional tier (`localN`, with legacy aliases), or any Ollama model tag.
- * Forced targets bypass the judge, verification, and the cascade.
+ * Maps `--model`/`--provider` to a forced target. Without `--provider`,
+ * `--model` is always an Ollama tag (or a `localN` tier, with legacy
+ * aliases); with `--provider`, the model belongs to that cloud provider
+ * (the provider's default model when `--model` is unset). Forced targets
+ * bypass the judge, verification, and the cascade.
  */
 export function forcedTargetOf(
   model: string | undefined,
+  provider: string | undefined,
   mistralModel: string,
   anthropicModel: string,
 ): ForcedTarget | undefined {
+  if (provider !== undefined) {
+    if (provider !== "mistral" && provider !== "claude") {
+      throw new Error(
+        `unknown provider "${provider}" — use mistral or claude`,
+      );
+    }
+    const defaultModel = provider === "mistral"
+      ? mistralModel
+      : anthropicModel;
+    return {
+      kind: "cloud",
+      provider,
+      model: model !== undefined && model !== "" ? model : defaultModel,
+    };
+  }
   if (model === undefined) return undefined;
   // Old, model-size-derived names still work as aliases onto positions.
   const aliases: Record<string, string> = {
@@ -243,11 +280,5 @@ export function forcedTargetOf(
   };
   const tier = aliases[model] ?? model;
   if (/^local\d+$/.test(tier)) return { kind: "tier", tier };
-  if (model === "mistral" || model === mistralModel) {
-    return { kind: "cloud", provider: "mistral" };
-  }
-  if (model === "claude" || model === anthropicModel) {
-    return { kind: "cloud", provider: "claude" };
-  }
   return { kind: "model", model };
 }

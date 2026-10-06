@@ -15,7 +15,7 @@ Tier 2  local3  (default: Ministral 3 14B, loaded on demand)   → demanding but
 Tier 3  cloud   (Mistral / Claude APIs)                       → heavy reasoning, code generation, frontier tasks
 ```
 
-The tiers are semantic (difficulty), and there can be any number of them: the ordered `models` list in `config.json` defines both the models and the escalation order (position 1 = `local1`, and so on), each with an optional description the judge reads to route. The judge assigns the tier; escalation only walks configured tiers and ends at cloud. An explicit empty list is a deliberate cloud-only setup.
+The tiers are semantic (difficulty), and there can be any number of them: the ordered `models` list in `config.json` defines both the models and the escalation order (position 1 = `local1`, and so on), each with an optional description the judge reads to route. Every entry has an optional `provider` property — unset (or `"ollama"`) means an Ollama model; `"mistral"` or `"claude"` puts a cloud model inside the cascade at that position. The judge assigns the tier; escalation only walks configured tiers. The implicit final cloud tier exists only when no entry in the list is a cloud model — a list containing one ends exactly where the user put it. An explicit empty list is a deliberate cloud-only setup (the judge is skipped; the raw question routes to cloud).
 
 Flow of every request:
 
@@ -23,7 +23,7 @@ Flow of every request:
 2. If a local tier is chosen, it attempts the task (with tools, agent-loop style). Its answer is **verified** by a cheap local pass (`PASS`/`FAIL`). The verifier is biased conservative: it must see a clear deficiency (wrong, incomplete, or off-question) to say `FAIL` — uncertainty passes. Verification only runs on local answers; a cloud answer is final (there is nothing left to escalate to) and `--model`-forced tiers skip it.
 3. On failure (or a failed verification), it **escalates**: 3B → 8B → 14B → cloud.
 4. Cloud tiers receive the improved prompt, never the raw one.
-5. `--model` is a hard override: it names one model (an Ollama tag such as `ministral-3:8b`, a `localN` tier, `mistral`/`claude`, or a cloud model tag) and the raw question goes to exactly that model — no judge, no verification, no escalation.
+5. `--model` is a hard override naming one model, and the raw question goes to exactly that model — no judge, no verification, no escalation. Without `--provider`, `--model` is always an **Ollama** tag (or a `localN` tier); `--provider mistral|claude` makes it a cloud model on that provider (the provider's default model when `--model` is unset).
 
 Design principles:
 
@@ -90,10 +90,12 @@ noa config get <KEY>            print a setting (secrets are masked unless --sho
 noa config list                 list all settings (values masked)
 noa config unset <KEY>          remove a setting
 noa <question>                  ask anything — routes automatically
-noa --model <model> <question>  force one model — no routing, no verification, no escalation.
+noa --model <model> <question>  force one Ollama model — no routing, no verification, no escalation.
                                  Examples (the defaults): ministral-3:3b | ministral-3:8b |
-                                 ministral-3:14b | mistral-large-latest; any Ollama tag,
-                                 localN tier, mistral, or claude also work
+                                 ministral-3:14b; any Ollama tag or localN tier also works.
+                                 For cloud models, pair with --provider.
+noa --provider <p> [model]      the cloud provider for --model: mistral | claude; the
+                                 provider's default model is used when --model is unset
 noa --allow-tools <cmd,...>     set the tool allowlist for this invocation (highest precedence;
                                  example: --allow-tools ls,cat,head,tail,wc,grep,find,jq,curl;
                                  persist via noa config set NOA_TOOLS)
@@ -133,7 +135,7 @@ All non-secret settings live in `~/.config/noa/config.json` (JSON, validated wit
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
-| `models` | ordered array of `{model, description?}` — the cascade, any count; explicit `[]` is cloud-only | `[{ministral-3:3b ...}, {ministral-3:8b ...}, {ministral-3:14b ...}]` with the standard descriptions |
+| `models` | ordered array of `{model, description?, provider?}` — the cascade, any count; `provider` unset = Ollama, `"mistral"`/`"claude"` = a cloud model in the cascade; explicit `[]` is cloud-only | `[{ministral-3:3b ...}, {ministral-3:8b ...}, {ministral-3:14b ...}]` with the standard descriptions |
 | `NOA_TOOLS` | Tool allowlist (comma-separated) | none (no tools callable) |
 | `NOA_ALLOW_PATHS` | Allowed paths (comma-separated) | current directory |
 | `NOA_CLOUD` | Cloud provider order | `mistral,claude` |

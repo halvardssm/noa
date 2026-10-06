@@ -170,19 +170,23 @@ Deno.test("resolveModels: absent or invalid models fall back to defaults; empty 
   assertEquals(resolveModels({ models: [] }), []);
 });
 
-Deno.test("resolveModels: accepts an ordered list of models with descriptions", () => {
+Deno.test("resolveModels: accepts an ordered list of models with descriptions and providers", () => {
   const models = resolveModels({
     models: [
       { model: "qwen3:4b", description: "chat and trivia" },
-      { model: "ministral-3:14b" },
+      { model: "mistral-small-latest", provider: "mistral", description: "hard" },
       "llama3.1:70b",
     ],
   });
   assertEquals(models, [
     { model: "qwen3:4b", description: "chat and trivia" },
-    { model: "ministral-3:14b" },
+    { model: "mistral-small-latest", provider: "mistral", description: "hard" },
     { model: "llama3.1:70b" },
   ]);
+  // Unset provider means Ollama; unknown providers fail validation at load.
+  assertEquals(resolveModels({ models: [{ model: "x", provider: "ollama" }] }), [{
+    model: "x",
+  }]);
 });
 
 Deno.test("resolveModels: defaults when models is invalid (validation happens at load)", () => {
@@ -203,6 +207,8 @@ Deno.test("loadConfig: rejects values and models that fail the schema", async ()
     await assertRejects(() => loadConfig(path), Error, "models");
     await Deno.writeTextFile(path, '{"models": ["ok", {"model": ""}]}');
     await assertRejects(() => loadConfig(path), Error, "models");
+    await Deno.writeTextFile(path, '{"models": [{"model": "x", "provider": "openai"}]}');
+    await assertRejects(() => loadConfig(path), Error, "not a valid noa config");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

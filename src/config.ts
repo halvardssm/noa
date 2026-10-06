@@ -9,18 +9,21 @@ export const SUGGESTED_TOOLS = "ls,cat,head,tail,wc,grep,find,jq,curl";
 
 /** One entry of the user-defined local model cascade. */
 export interface ModelEntry {
-  /** The Ollama model tag, e.g. `ministral-3:3b`. */
+  /** The model tag: an Ollama tag, or a cloud model name with `provider`. */
   readonly model: string;
   /** What this model is for; the judge reads it to route. Optional. */
   readonly description?: string;
+  /** Which provider serves this model; unset (or "ollama") means Ollama. */
+  readonly provider?: "ollama" | "mistral" | "claude";
 }
 
-/** Schema of one cascade entry: a bare model tag, or model + description. */
+/** Schema of one cascade entry: a bare model tag, or model + metadata. */
 const modelEntrySchema: z.ZodType<ModelEntry> = z.union([
   z.string().min(1).transform((model) => ({ model })),
   z.object({
     model: z.string().min(1),
     description: z.string().min(1).optional(),
+    provider: z.enum(["ollama", "mistral", "claude"]).optional(),
   }),
 ]);
 
@@ -261,6 +264,9 @@ export function resolveModels(
   return result.data.map((entry) => ({
     model: entry.model,
     ...(entry.description !== undefined ? { description: entry.description } : {}),
+    ...(entry.provider !== undefined && entry.provider !== "ollama"
+      ? { provider: entry.provider }
+      : {}),
   }));
 }
 

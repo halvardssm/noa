@@ -513,3 +513,56 @@ Deno.test("cascade: a forced model with no answer errors clearly", async () => {
     "produced no answer",
   );
 });
+
+Deno.test("cascade: a cloud tier with a missing provider escalates", async () => {
+  const { fx, deps } = fixture({
+    judge: [judgmentJson("local1", "improved")],
+    local2: ["ollama tier answer"],
+    verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
+  });
+  const answer = await cascade("q", {
+    ...deps,
+    localTiers: ["local1", "local2", "local3"],
+    tierTargets: {
+      local1: { provider: "mistral", model: "mistral-small-latest" },
+      local2: { provider: "ollama", model: "x" },
+      local3: { provider: "ollama", model: "y" },
+    },
+    clouds: [],
+  });
+  assertEquals(answer, "ollama tier answer");
+  assert(fx.logs.some((l) => l.includes("local1 needs mistral")));
+});
+
+Deno.test("cascade: cloud tiers in the list are served by their provider", async () => {
+  const calls: string[] = [];
+  const { fx, deps } = fixture({
+    judge: [judgmentJson("local1", "improved")],
+    local1: ["local fails verification"],
+    verify: [
+      JSON.stringify({ verdict: "FAIL", reason: "nope" }),
+      JSON.stringify({ verdict: "PASS", reason: "ok" }),
+    ],
+  });
+  const answer = await cascade("q", {
+    ...deps,
+    localTiers: ["local1", "local2"],
+    tierTargets: {
+      local1: { provider: "ollama", model: "x" },
+      local2: { provider: "mistral", model: "mistral-small-latest" },
+    },
+    clouds: [{
+      name: "mistral",
+      keySetting: "MISTRAL_API_KEY",
+      chat: (prompt, model) => {
+        calls.push(`${prompt}/${model ?? "default"}`);
+        return Promise.resolve("cloud tier answer");
+      },
+    }],
+  });
+  assertEquals(answer, "cloud tier answer");
+  assertEquals(calls, ["improved/mistral-small-latest"]);
+  assert(fx.logs.some((l) => l.includes("local2 via mistral")));
+  // No implicit trailing cloud: the user's list ends at the cloud model.
+  assert(!fx.logs.some((l) => l.includes("cloud: mistral (answer is final")));
+});

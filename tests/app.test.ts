@@ -135,7 +135,7 @@ Deno.test("app: forced mistral without a key gives the config remedy", async () 
   const app = await createApp({
     env: envWith({}),
     fileValues: {},
-    model: "mistral",
+    provider: "mistral",
     onLog: () => {},
   });
   const error = await assertRejects(() => app.ask("hard task"), Error);
@@ -157,7 +157,7 @@ Deno.test("app: forced mistral receives the raw question (no upgrade steps)", as
   const app = await createApp({
     env: envWith({ MISTRAL_API_KEY: "sk-test" }),
     fileValues: {},
-    model: "mistral",
+    provider: "mistral",
     onLog: () => {},
     fetchFn,
   });
@@ -296,7 +296,7 @@ Deno.test("app: cloud order follows NOA_CLOUD with only configured providers", a
   const app = await createApp({
     env: envWith({ ANTHROPIC_API_KEY: "sk-ant", NOA_CLOUD: "mistral,claude" }),
     fileValues: {},
-    model: "claude",
+    provider: "claude",
     onLog: () => {},
     fetchFn,
   });
@@ -324,31 +324,117 @@ Deno.test("app: --model with an Ollama tag uses that model directly", async () =
   assertEquals(seen, ["qwen3:4b"]);
 });
 
-Deno.test("app: forcedTargetOf maps names, tags, tiers, and aliases", async () => {
+Deno.test("app: forcedTargetOf maps ollama tags, tiers, and provider pairs", async () => {
   const { forcedTargetOf } = await import("../src/app.ts");
-  assertEquals(forcedTargetOf("ministral-3:8b", "mistral-large-latest", "claude-sonnet-4-5"), {
+  const M = "mistral-large-latest";
+  const C = "claude-sonnet-4-5";
+  // Without --provider, --model is always Ollama.
+  assertEquals(forcedTargetOf("ministral-3:8b", undefined, M, C), {
     kind: "model",
     model: "ministral-3:8b",
   });
-  assertEquals(forcedTargetOf("mistral-large-latest", "mistral-large-latest", "claude-sonnet-4-5"), {
+  assertEquals(forcedTargetOf("mistral-large-latest", undefined, M, C), {
+    kind: "model",
+    model: "mistral-large-latest",
+  });
+  assertEquals(forcedTargetOf("local2", undefined, M, C), { kind: "tier", tier: "local2" });
+  assertEquals(forcedTargetOf("local8b", undefined, M, C), { kind: "tier", tier: "local2" });
+  assertEquals(forcedTargetOf(undefined, undefined, M, C), undefined);
+  // With --provider, the model belongs to that cloud provider.
+  assertEquals(forcedTargetOf("mistral-small-latest", "mistral", M, C), {
     kind: "cloud",
     provider: "mistral",
+    model: "mistral-small-latest",
   });
-  assertEquals(forcedTargetOf("mistral", "mistral-large-latest", "claude-sonnet-4-5"), {
-    kind: "cloud",
-    provider: "mistral",
-  });
-  assertEquals(forcedTargetOf("claude-sonnet-4-5", "mistral-large-latest", "claude-sonnet-4-5"), {
+  assertEquals(forcedTargetOf(undefined, "claude", M, C), {
     kind: "cloud",
     provider: "claude",
+    model: C,
   });
-  assertEquals(forcedTargetOf("local2", "mistral-large-latest", "claude-sonnet-4-5"), {
-    kind: "tier",
-    tier: "local2",
+  assertEquals(forcedTargetOf(undefined, "mistral", M, C), {
+    kind: "cloud",
+    provider: "mistral",
+    model: M,
   });
-  assertEquals(forcedTargetOf("local8b", "mistral-large-latest", "claude-sonnet-4-5"), {
-    kind: "tier",
-    tier: "local2",
+  let error: unknown;
+  try {
+    forcedTargetOf("x", "openai", M, C);
+  } catch (e) {
+    error = e;
+  }
+  assert(error instanceof Error && error.message.includes("unknown provider"));
+});
+
+Deno.test("app: a cloud model inside the models cascade is served by its provider", async () => {
+  const seen: string[] = [];
+  const fetchFn: FetchFn = async (url, init) => {
+    const u = String(url);
+    if (u.includes("mistral.ai")) {
+      seen.push(
+        "cloud:" + JSON.parse((init as RequestInit).body as string).model,
+      );
+      return jsonResponse({ choices: [{ message: { content: "cloud tier" } }] });
+    }
+    const body = JSON.parse((init as RequestInit).body as string);
+    const user = body.messages?.[body.messages.length - 1]?.content ?? "";
+    if (body.format === "json" && user.startsWith("Question:")) {
+      return ollamaBody(VERIFY_PASS);
+    }
+    if (body.format === "json") {
+      return ollamaBody(
+        JSON.stringify({ tier: "local2", reason: "x", improved_prompt: "improved" }),
+      );
+    }
+    return ollamaBody("local tier");
+  };
+  const app = await createApp({
+    env: envWith({ MISTRAL_API_KEY: "sk" }),
+    fileValues: {
+      models: [
+        { model: "ministral-3:3b", description: "easy" },
+        { model: "mistral-small-latest", provider: "mistral", description: "hard" },
+      ],
+    },
+    onLog: () => {},
+    fetchFn,
   });
-  assertEquals(forcedTargetOf(undefined, "mistral-large-latest", "claude-sonnet-4-5"), undefined);
+  const answer = await app.ask("hard task");
+  assertEquals(answer, "cloud tier");
+  assert(seen.includes("cloud:mistral-small-latest"));
+});
+
+Deno.test("app: --provider forces the cloud provider for the model", async () => {
+  const seen: { url: string; model: string }[] = [];
+  const fetchFn: FetchFn = async (url, init) => {
+    const body = JSON.parse((init as RequestInit).body as string);
+    seen.push({ url: String(url), model: body.model });
+    return jsonResponse({ choices: [{ message: { content: "forced cloud" } }] });
+  };
+  const app = await createApp({
+    env: envWith({ MISTRAL_API_KEY: "sk" }),
+    fileValues: {},
+    model: "mistral-small-latest",
+    provider: "mistral",
+    onLog: () => {},
+    fetchFn,
+  });
+  const answer = await app.ask("the raw question");
+  assertEquals(answer, "forced cloud");
+  assertEquals(seen[0].url.includes("mistral.ai"), true);
+  assertEquals(seen[0].model, "mistral-small-latest");
+});
+
+Deno.test("app: an unknown provider is rejected", async () => {
+  await assertRejects(
+    () =>
+      createApp({
+        env: envWith({}),
+        fileValues: {},
+        model: "mistral-small-latest",
+        provider: "openai",
+        onLog: () => {},
+      }),
+    Error,
+    "unknown provider",
+  );
 });
