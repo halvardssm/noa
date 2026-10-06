@@ -1,0 +1,40 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/cli@1": "1.0.32",
+    "jsr:@std/dotenv@~0.225.8": "0.225.8",
+    "jsr:@std/text@1": "1.1.0",
+    "jsr:@stdext/cli@0.1": "0.1.0",
+    "jsr:@stdx/cli@~0.1.1": "0.1.1"
+  },
+  "jsr": {
+    "@std/cli@1.0.32": {
+      "integrity": "188b3a100d6202d64e3f5bd3d799c7fa4f6d77f92cc65eb7f641c1fa0aa92a66"
+    },
+    "@std/dotenv@0.225.8": {
+      "integrity": "27b8c1a9d00cbf938345a5924487c04d9b27bdd7e7bd1983f54bcf76d0a0174a"
+    },
+    "@std/text@1.1.0": {
+      "integrity": "3db511996317f63e35b76fe18fe35249723ae0ff6f8305398c78dd64ffa809a7"
+    },
+    "@stdext/cli@0.1.0": {
+      "integrity": "5f6ea3a85369f7a89e840cbd4ac6b102f3516cc3458fe1eb6313ca781838883e",
+      "dependencies": [
+        "jsr:@stdx/cli"
+      ]
+    },
+    "@stdx/cli@0.1.1": {
+      "integrity": "0f0fb7c272c5f6928a7cfde5cf21c2de66f256f641108c8ec88359ac0158899c",
+      "dependencies": [
+        "jsr:@std/cli",
+        "jsr:@std/text"
+      ]
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/dotenv@~0.225.8",
+      "jsr:@stdext/cli@0.1"
+    ]
+  }
+}
