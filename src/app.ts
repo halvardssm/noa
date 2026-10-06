@@ -5,7 +5,7 @@ import {
   SUGGESTED_TOOLS,
 } from "./config.ts";
 import { ollamaChat } from "./ollama.ts";
-import { mistralProvider } from "./cloud.ts";
+import { anthropicProvider, mistralProvider } from "./cloud.ts";
 import { createGate, type Gate } from "./tools.ts";
 import { cascade, type CascadeDeps, type ChatFn } from "./router.ts";
 import type { FetchFn } from "./http.ts";
@@ -112,19 +112,42 @@ export async function createApp(options: AppOptions): Promise<App> {
         fetchFn: options.fetchFn,
       });
 
-  const apiKey = options.env.get("MISTRAL_API_KEY") ??
-    options.fileValues["MISTRAL_API_KEY"] ?? "";
-  const cloud = apiKey === ""
-    ? undefined
-    : mistralProvider({
-      apiKey,
-      fetchFn: options.fetchFn,
-    });
+  const apiKey = (name: string): string =>
+    options.env.get(name) ?? options.fileValues[name] ?? "";
+
+  /** Cloud providers in the user's preferred order (NOA_CLOUD). */
+  const cloudOrder = (options.env.get("NOA_CLOUD") ??
+    options.fileValues["NOA_CLOUD"] ?? "mistral,claude")
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name !== "");
+  const clouds = [];
+  for (const name of cloudOrder) {
+    if (name === "mistral" && apiKey("MISTRAL_API_KEY") !== "") {
+      clouds.push(
+        mistralProvider({
+          apiKey: apiKey("MISTRAL_API_KEY"),
+          model: options.env.get("NOA_MISTRAL_MODEL") ??
+            options.fileValues["NOA_MISTRAL_MODEL"],
+          fetchFn: options.fetchFn,
+        }),
+      );
+    } else if (name === "claude" && apiKey("ANTHROPIC_API_KEY") !== "") {
+      clouds.push(
+        anthropicProvider({
+          apiKey: apiKey("ANTHROPIC_API_KEY"),
+          model: options.env.get("NOA_ANTHROPIC_MODEL") ??
+            options.fileValues["NOA_ANTHROPIC_MODEL"],
+          fetchFn: options.fetchFn,
+        }),
+      );
+    }
+  }
 
   const deps: CascadeDeps = {
     chatFor,
     gate,
-    cloud,
+    clouds,
     forcedTier: forcedTierOf(options.model, options.onLog),
     noVerify: options.noVerify,
     onLog: options.onLog,
@@ -144,10 +167,12 @@ function forcedTierOf(
   onLog: (message: string) => void,
 ): CascadeDeps["forcedTier"] {
   if (model === undefined) return undefined;
-  if (model === "local3b" || model === "local8b" || model === "local14b") {
+  if (
+    model === "local3b" || model === "local8b" || model === "local14b" ||
+    model === "mistral" || model === "claude"
+  ) {
     return model;
   }
-  if (model === "mistral") return "mistral";
-  onLog(`model "${model}" is not supported yet — routing to mistral instead`);
+  onLog(`model "${model}" is not supported yet — routing to cloud instead`);
   return "mistral";
 }

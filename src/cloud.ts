@@ -6,6 +6,8 @@ import type { FetchFn } from "./http.ts";
  */
 export interface CloudProvider {
   readonly name: string;
+  /** The .env setting that must exist for this provider to be configured. */
+  readonly keySetting: string;
   /** Answers the improved prompt. */
   chat(prompt: string): Promise<string>;
 }
@@ -83,6 +85,75 @@ export async function mistralChat(options: MistralOptions): Promise<string> {
 export function mistralProvider(config: MistralConfig): CloudProvider {
   return {
     name: "mistral",
+    keySetting: "MISTRAL_API_KEY",
     chat: (prompt) => mistralChat({ ...config, prompt }),
+  };
+}
+
+/** Configuration of the Anthropic provider. */
+export interface AnthropicConfig {
+  readonly apiKey: string;
+  /** Model name; defaults to `claude-sonnet-4-5`. */
+  readonly model?: string;
+  readonly fetchFn?: FetchFn;
+}
+
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+
+/** Calls the Anthropic Messages API. */
+export async function anthropicChat(
+  options: { prompt: string } & AnthropicConfig,
+): Promise<string> {
+  if (options.apiKey === "") {
+    throw new ProviderError(
+      "ANTHROPIC_API_KEY is not set — run `noa config set ANTHROPIC_API_KEY`",
+    );
+  }
+  const fetchFn = options.fetchFn ?? fetch;
+  const body = {
+    model: options.model ?? "claude-sonnet-4-5",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: options.prompt }],
+  };
+  let response;
+  try {
+    response = await fetchFn(ANTHROPIC_URL, {
+      method: "POST",
+      headers: {
+        "x-api-key": options.apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new ProviderError(
+      "could not reach api.anthropic.com — check your network connection",
+    );
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new ProviderError(
+      "Anthropic rejected the key — run `noa config set ANTHROPIC_API_KEY`",
+    );
+  }
+  if (!response.ok) {
+    throw new ProviderError(`Anthropic API: HTTP ${response.status}`);
+  }
+  const payload = await response.json() as {
+    content?: { type?: string; text?: string }[];
+  };
+  const text = payload.content?.find((block) => block.type === "text")?.text;
+  if (text === undefined) {
+    throw new ProviderError("Anthropic API returned no answer");
+  }
+  return text;
+}
+
+/** A `CloudProvider` backed by the Anthropic Messages API. */
+export function anthropicProvider(config: AnthropicConfig): CloudProvider {
+  return {
+    name: "claude",
+    keySetting: "ANTHROPIC_API_KEY",
+    chat: (prompt) => anthropicChat({ ...config, prompt }),
   };
 }

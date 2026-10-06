@@ -43,10 +43,11 @@ export interface CascadeDeps {
   readonly gate: {
     run(command: string, args: readonly string[]): Promise<RunResult>;
   };
-  /** The cloud provider, when one is configured. */
-  readonly cloud?: CloudProvider;
+  /** The configured cloud providers, in user-preference order. */
+  readonly clouds?: readonly CloudProvider[];
   /** A tier forced by `--model`; skips verification and the cascade. */
-  readonly forcedTier?: "local3b" | "local8b" | "local14b" | "mistral";
+  readonly forcedTier?: "local3b" | "local8b" | "local14b" | "mistral" |
+    "claude";
   /** Skip the verification pass (`--no-verify`). */
   readonly noVerify?: boolean;
   /** Log sink (stderr in the CLI). */
@@ -68,11 +69,19 @@ export async function cascade(
 ): Promise<string> {
   const log = deps.onLog ?? (() => {});
 
+  const forcedCloud = deps.forcedTier === "mistral" || deps.forcedTier === "claude"
+    ? deps.forcedTier
+    : undefined;
+  const clouds = deps.clouds ?? [];
+
   // A forced cloud tier must not require Ollama at all; fail fast with the
   // config remedy before anything local runs.
-  if (deps.forcedTier === "mistral" && deps.cloud === undefined) {
+  if (forcedCloud !== undefined && !clouds.some((p) => p.name === forcedCloud)) {
+    const setting = forcedCloud === "claude"
+      ? "ANTHROPIC_API_KEY"
+      : "MISTRAL_API_KEY";
     throw new Error(
-      "no cloud provider configured — run `noa config set MISTRAL_API_KEY`",
+      `${forcedCloud} is not configured — run \`noa config set ${setting}\``,
     );
   }
 
@@ -88,18 +97,26 @@ export async function cascade(
 
   for (const tier of plan) {
     if (tier === "cloud") {
-      if (deps.cloud === undefined) {
-        if (deps.forcedTier === "mistral") {
-          throw new Error(
-            "no cloud provider configured — run `noa config set MISTRAL_API_KEY`",
-          );
-        }
+      if (clouds.length === 0) {
         throw new Error(
-          "no local model passed verification and no cloud provider is configured — run `noa config set MISTRAL_API_KEY`",
+          "no local model passed verification and no cloud provider is configured — run `noa config set MISTRAL_API_KEY` (or ANTHROPIC_API_KEY)",
         );
       }
-      log(`cloud: ${deps.cloud.name} (answer is final, no verification)`);
-      return await deps.cloud.chat(judgment.improvedPrompt);
+      const chain = forcedCloud !== undefined
+        ? clouds.filter((p) => p.name === forcedCloud)
+        : clouds;
+      const failures: string[] = [];
+      for (const provider of chain) {
+        log(`cloud: ${provider.name} (answer is final, no verification)`);
+        try {
+          return await provider.chat(judgment.improvedPrompt);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log(`cloud: ${provider.name} failed (${message})`);
+          failures.push(`${provider.name}: ${message}`);
+        }
+      }
+      throw new Error(`all cloud providers failed — ${failures.join("; ")}`);
     }
 
     log(`tier: ${tier} (attempting)`);
@@ -140,7 +157,7 @@ export function planTiers(
   judged: Tier,
   forced: CascadeDeps["forcedTier"],
 ): Tier[] {
-  if (forced === "mistral") return ["cloud"];
+  if (forced === "mistral" || forced === "claude") return ["cloud"];
   const start = forced ?? judged;
   const chain: Tier[] = [];
   if (start === "cloud") return ["cloud"];

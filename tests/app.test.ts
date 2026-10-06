@@ -165,3 +165,32 @@ Deno.test("app: mistral configured receives the improved prompt", async () => {
   assertEquals(answer, "cloud answer");
   assertEquals(prompts, ["improved"]);
 });
+
+Deno.test("app: cloud order follows NOA_CLOUD with only configured providers", async () => {
+  const prompts: string[] = [];
+  const fetchFn: FetchFn = async (url, init) => {
+    if (String(url).includes("anthropic.com")) {
+      prompts.push(JSON.parse((init as RequestInit).body as string).messages[0].content);
+      return jsonResponse({ content: [{ type: "text", text: "claude" }] });
+    }
+    if (String(url).includes("mistral.ai")) {
+      prompts.push(JSON.parse((init as RequestInit).body as string).messages[0].content);
+      return jsonResponse({ choices: [{ message: { content: "mistral" } }] });
+    }
+    const body = JSON.parse((init as RequestInit).body as string);
+    if (body.format === "json" && body.messages.length === 2) return ollamaBody(JUDGE_3B);
+    if (body.format === "json") return ollamaBody(VERIFY_PASS);
+    return ollamaBody("local answer");
+  };
+  // Only claude is configured; mistral in the order is skipped.
+  const app = await createApp({
+    env: envWith({ ANTHROPIC_API_KEY: "sk-ant", NOA_CLOUD: "mistral,claude" }),
+    fileValues: {},
+    model: "claude",
+    onLog: () => {},
+    fetchFn,
+  });
+  const answer = await app.ask("hard task");
+  assertEquals(answer, "claude");
+  assertEquals(prompts, ["improved"]);
+});

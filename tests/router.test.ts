@@ -145,17 +145,88 @@ Deno.test("cascade: cloud receives the improved prompt, never the raw one", asyn
   });
   const answer = await cascade("raw question", {
     ...deps,
-    cloud: {
+    clouds: [{
       name: "mistral",
+      keySetting: "MISTRAL_API_KEY",
       chat: async (prompt) => {
         prompts.push(prompt);
         return "cloud answer";
       },
-    },
+    }],
   });
   assertEquals(answer, "cloud answer");
   assertEquals(prompts, ["improved hard prompt"]);
   assert(fx.logs.some((l) => l.includes("mistral")));
+});
+
+Deno.test("cascade: a failing cloud provider falls through to the next", async () => {
+  const { fx, deps } = fixture({
+    judge: [judgmentJson("local14b", "improved")],
+    local14b: ["bad"],
+    local8b: ["bad"],
+    verify: [JSON.stringify({ verdict: "FAIL", reason: "nope" })],
+  });
+  const answer = await cascade("q", {
+    ...deps,
+    clouds: [
+      {
+        name: "mistral",
+        keySetting: "MISTRAL_API_KEY",
+        chat: () => Promise.reject(new Error("Mistral API: HTTP 429")),
+      },
+      {
+        name: "claude",
+        keySetting: "ANTHROPIC_API_KEY",
+        chat: () => Promise.resolve("claude answer"),
+      },
+    ],
+  });
+  assertEquals(answer, "claude answer");
+  assert(fx.logs.some((l) => l.includes("mistral failed")));
+  assert(fx.logs.some((l) => l.includes("claude")));
+});
+
+Deno.test("cascade: forced claude without configuration names its key", async () => {
+  const { deps } = fixture({
+    judge: [judgmentJson("local3b", "improved")],
+    local3b: ["answer"],
+    verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
+  });
+  const error = await assertRejects(
+    () => cascade("q", { ...deps, forcedTier: "claude" }),
+    Error,
+  );
+  assert(error.message.includes("claude is not configured"));
+  assert(error.message.includes("ANTHROPIC_API_KEY"));
+});
+
+Deno.test("cascade: all cloud providers failing reports every failure", async () => {
+  const { deps } = fixture({
+    judge: [judgmentJson("local3b", "improved")],
+    local3b: ["bad"],
+    verify: [JSON.stringify({ verdict: "FAIL", reason: "nope" })],
+  });
+  const error = await assertRejects(
+    () =>
+      cascade("q", {
+        ...deps,
+        clouds: [
+          {
+            name: "mistral",
+            keySetting: "MISTRAL_API_KEY",
+            chat: () => Promise.reject(new Error("HTTP 429")),
+          },
+          {
+            name: "claude",
+            keySetting: "ANTHROPIC_API_KEY",
+            chat: () => Promise.reject(new Error("HTTP 500")),
+          },
+        ],
+      }),
+    Error,
+  );
+  assert(error.message.includes("mistral: HTTP 429"));
+  assert(error.message.includes("claude: HTTP 500"));
 });
 
 Deno.test("cascade: no cloud provider gives a clear message, not a crash", async () => {

@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { ollamaChat, ollamaIsUp } from "../src/ollama.ts";
-import { mistralChat } from "../src/cloud.ts";
+import { anthropicChat, mistralChat } from "../src/cloud.ts";
 import type { FetchFn, ResponseLike } from "../src/http.ts";
 
 function jsonResponse(body: unknown, status = 200): ResponseLike {
@@ -159,5 +159,49 @@ Deno.test("mistral: auth errors name the key setting", async () => {
     () => mistralChat({ prompt: "p", apiKey: "wrong", fetchFn }),
     Error,
     "MISTRAL_API_KEY",
+  );
+});
+
+Deno.test("anthropic: sends the messages request with the right headers", async () => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fetchFn: FetchFn = async (url, init) => {
+    calls.push({ url: String(url), init: init! });
+    return jsonResponse({ content: [{ type: "text", text: "claude answer" }] });
+  };
+  const answer = await anthropicChat({
+    prompt: "improved prompt",
+    apiKey: "sk-ant-test",
+    fetchFn,
+  });
+  assertEquals(answer, "claude answer");
+  assertEquals(calls[0].url, "https://api.anthropic.com/v1/messages");
+  const headers = new Headers(calls[0].init.headers);
+  assertEquals(headers.get("x-api-key"), "sk-ant-test");
+  assertEquals(headers.get("anthropic-version"), "2023-06-01");
+  const body = JSON.parse(calls[0].init.body as string);
+  assertEquals(body.model, "claude-sonnet-4-5");
+  assertEquals(body.messages, [{ role: "user", content: "improved prompt" }]);
+});
+
+Deno.test("anthropic: missing key fails before any request", async () => {
+  let called = false;
+  const fetchFn: FetchFn = async () => {
+    called = true;
+    return jsonResponse({});
+  };
+  await assertRejects(
+    () => anthropicChat({ prompt: "p", apiKey: "", fetchFn }),
+    Error,
+    "ANTHROPIC_API_KEY",
+  );
+  assert(!called);
+});
+
+Deno.test("anthropic: auth errors name the key setting", async () => {
+  const fetchFn: FetchFn = async () => jsonResponse({ message: "bad" }, 401);
+  await assertRejects(
+    () => anthropicChat({ prompt: "p", apiKey: "wrong", fetchFn }),
+    Error,
+    "ANTHROPIC_API_KEY",
   );
 });
