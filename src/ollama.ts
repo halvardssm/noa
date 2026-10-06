@@ -57,6 +57,14 @@ interface OllamaMessage {
   }[];
 }
 
+/** Maps a ChatMessage to Ollama's wire format (tool_calls, tool_name). */
+function toWire(message: ChatMessage): Record<string, unknown> {
+  const wire: Record<string, unknown> = { role: message.role, content: message.content };
+  if (message.toolCalls !== undefined) wire.tool_calls = message.toolCalls;
+  if (message.toolName !== undefined) wire.tool_name = message.toolName;
+  return wire;
+}
+
 /**
  * Talks to the local Ollama daemon over HTTP (rule 6: noa never spawns it).
  * Throws with a clear hint when the daemon is down.
@@ -68,7 +76,7 @@ export async function ollamaChat(
   const baseUrl = options.baseUrl ?? OLLAMA_BASE_URL;
   const body: Record<string, unknown> = {
     model: options.model,
-    messages: options.messages,
+    messages: options.messages.map(toWire),
     stream: false,
   };
   if (options.tools !== undefined && options.tools.length > 0) {
