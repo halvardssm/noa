@@ -3,16 +3,23 @@
   "version": "0.1.0",
   "exports": "./src/main.ts",
   "publish": {
-    "include": ["src/**", "deno.json", "README.md"]
+    "include": [
+      "src/**",
+      "deno.json",
+      "README.md"
+    ]
   },
   "nodeModulesDir": "none",
   "tasks": {
     "noa": "deno run -A --allow-write=$HOME/dev src/main.ts",
     "dev": "deno run -A --watch src/main.ts",
-    "compile": "deno compile -A --output compiled/noa src/main.ts"
+    "compile": "deno compile -A --output compiled/noa src/main.ts",
+    "test": "deno test -A"
   },
   "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.13",
+    "@std/cli": "jsr:@std/cli@^1.0.32",
     "@std/dotenv": "jsr:@std/dotenv@^0.225.8",
-    "@stdext/cli": "jsr:@stdext/cli@^0.1.0"
+    "@stdx/cli": "jsr:@stdx/cli@^0.1.1"
   }
 }
