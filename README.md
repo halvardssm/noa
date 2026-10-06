@@ -37,23 +37,23 @@ noa implements no tools of its own. The agent's only capability is invoking **al
    - CLI flag `--allow-paths <p,...>` (this invocation)
    - env var `NOA_ALLOW_PATHS` (this shell/session — wins over the config file because `@std/dotenv`'s `load()` never overrides existing process env)
    - config file `~/.config/noa/.env` (global; written via `noa config set NOA_ALLOW_PATHS <p,...>`)
-   - built-in default `~/dev`
+   - built-in default: **the current directory** — the narrowest scope that is still useful. noa warns on stderr when the current directory is not `$HOME` or one of its folders and nothing was configured explicitly; a flag, env var, or config entry is a deliberate choice and never warns.
 
    A flag may widen or narrow freely: the same user typed it, so there is nothing to protect against — which is why the earlier `--force-paths` escape hatch is dropped as redundant. `noa config get` prints the effective list so the live configuration is always visible.
 
    *Honest limits:* this is screening of arguments, not a sandbox. An allowlisted binary can still touch paths noa cannot see (its own config files, env vars, exotic flags). Runtime-enforced path boundaries for child processes would require OS-level sandboxing (sandbox-exec, bubblewrap/landlock) — explicitly out of scope. Deno permission flags bind noa's own process only (rule 6).
 2. **GET-only web:** `curl` is the only default network tool, and it is screened: invocations containing any method-, body-, or upload-defining argument (`-X` with a non-GET method, `-d`/`--data*`, `-T`/`--upload-file`, `-F`/`--form*`, `--request`) are rejected. This is also argument-level, not structural — the default posture is "GET, no body"; users who want stronger guarantees remove `curl` from their allowlist.
-3. **Allowlisted commands:** the built-in default allowlist is `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `find`, `jq`, `curl` (screened per rule 2). The effective allowlist resolves by the same precedence chain as rule 1 — each level *replaces* (does not merge with) the one below, so a user can strip defaults (e.g. remove `curl`) as well as add entries:
+3. **Allowlisted commands:** there is **no built-in default** — no tools are callable until the user grants them, and noa logs a hint with the suggested example (`ls,cat,head,tail,wc,grep,find,jq,curl`, also shown in `--help`) whenever the allowlist is empty. The effective allowlist resolves by precedence — each level *replaces* (does not merge with) the one below:
    - CLI flag `--allow-tools <cmd,...>` (this invocation)
    - env var `NOA_TOOLS` (this shell/session)
    - config file (`noa config set NOA_TOOLS <cmd,...>`)
-   - the default list
+   - nothing (no tools callable)
 
    Extending the allowlist is an explicit, logged escalation decision that belongs to the user, not the model. Commands are executed directly (no shell), so pipes, `;`, and `$(...)` injection are impossible. Every invocation is logged to stderr. Custom entries are resolved to absolute paths; entries inside the writable workspace are rejected (an allowed binary in `~/dev` could be overwritten and then spawned — Deno's docs call out exactly this `--allow-write` + `--allow-run` trap). Note: `node` is deliberately absent from the default allowlist — it is arbitrary-execution and voids every other rule; adding it is the user's informed choice.
 4. **Gated `rm`:** `rm` is never in the default allowlist. Even if the user adds it via `--allow-tools`, each invocation requires interactive human approval (the exact command must be retyped to approve) — and even approved, argument screening (rule 1) still applies. Approval can never override rule 1.
-5. **Deno permissions mirror the gate:** compiled/installed binaries use `--allow-net --allow-env=NOA_HOME,NOA_TOOLS,NOA_ALLOW_PATHS,HOME,MISTRAL_API_KEY,OLLAMA_HOST --allow-read=$HOME/dev,$HOME/.config/noa --allow-write=$HOME/dev,$HOME/.config/noa --allow-run=<default allowlist>` so the runtime enforces the default boundary even if the code checks were removed.
+5. **Deno permissions mirror the gate:** compiled/installed binaries use `--allow-net --allow-env=NOA_HOME,NOA_TOOLS,NOA_ALLOW_PATHS,HOME,MISTRAL_API_KEY,OLLAMA_HOST --allow-read=$HOME/dev,$HOME/.config/noa --allow-write=$HOME/dev,$HOME/.config/noa --allow-run=<the allowlist from NOA_TOOLS at compile time, none if unset>` so the runtime enforces the default boundary even if the code checks were removed.
 6. **Subprocess reality:** Deno permissions are enforced on the Deno process only — never on child processes. `--allow-run` gates which executables may be spawned (arguments are not checked); once spawned, a child runs with the user's full privileges, outside the sandbox. Therefore **noa never spawns Ollama**: Ollama runs as an independent user daemon and noa talks to it over `localhost:11434` (covered by `--allow-net`). The model executes nothing — it can only produce a request that passes through the gate inside noa's own sandboxed process.
-7. **Runtime vs. code enforcement for custom settings:** compiled binaries bake their permission flags in at compile time. The default allowlist and default paths are enforced by the runtime; user-extended `--allow-tools` lists and `--allow-paths` sets are enforced by code checks in the gate, since the compiled binary's flags cannot be widened at runtime. Users who want the runtime itself to enforce custom settings run from source (`deno task noa`) or recompile (`deno task compile`, which bakes the current `NOA_ALLOW_PATHS` into the Deno flags). A custom allowlist is only as strong as its weakest entry — adding `curl` unscreened or `node` effectively voids the GET-only posture and any path discipline.
+7. **Runtime vs. code enforcement for custom settings:** compiled binaries bake their permission flags in at compile time. A configured allowlist and configured paths are enforced by the runtime; user-extended `--allow-tools` lists and `--allow-paths` sets are enforced by code checks in the gate, since the compiled binary's flags cannot be widened at runtime. Users who want the runtime itself to enforce custom settings run from source with matching flags (`deno run --allow-run=<your,tools> --allow-read=<your,paths> ... src/main.ts`) or recompile (`deno task compile`, which bakes the current `NOA_TOOLS`/`NOA_ALLOW_PATHS` into the Deno flags). The `deno task noa` dev task carries the suggested example list as its `--allow-run` ceiling and the current directory as its read/write scope — the gate still enforces the actual configuration beneath it. A custom allowlist is only as strong as its weakest entry — adding `curl` unscreened or `node` effectively voids the GET-only posture and any path discipline.
 8. **Config writes are additive and secret-safe:** `noa config set` is the supported way to write settings — API keys, `NOA_TOOLS`, `NOA_ALLOW_PATHS`, model overrides — to `~/.config/noa/.env`. It creates the file `chmod 600` if missing, updates only the named key, and never rewrites or reorders unrelated entries. Secret-looking values (`*_KEY`, `*_TOKEN`, `*_SECRET`) are masked in `config get`/`config list` output unless `--show` is passed. Widening settings (`NOA_TOOLS`, `NOA_ALLOW_PATHS`) are writable via `config set` — this is the user acting deliberately at the keyboard, which is the same trust level as editing the file by hand; the model still cannot touch them, because it only ever requests allowlisted command runs, and `noa`/`config` are not allowlisted commands.
 
 ## Where things live
@@ -64,7 +64,7 @@ noa implements no tools of its own. The agent's only capability is invoking **al
 | noa config (`.env` with API keys, Modelfiles) | `~/.config/noa/` (override: `NOA_HOME`) |
 | Models                                        | `~/.ollama/` (Ollama's own storage)     |
 | Installed binary                              | `~/.deno/bin/`                          |
-| Allowed workspace                             | `~/dev` (override: `NOA_ALLOW_PATHS` env, comma-separated) |
+| Allowed paths                                 | current directory (configure: `NOA_ALLOW_PATHS`, comma-separated) |
 
 
 The package never writes inside its own install/repo directory. `deno install`, upgrades, and reinstalls must never clobber user config.
@@ -89,9 +89,10 @@ noa config unset <KEY>          remove a setting
 noa <question>                  ask anything — routes automatically
 noa --model <tier> <question>   force: local3b | local8b | local14b | claude | mistral
 noa --allow-tools <cmd,...>     set the tool allowlist for this invocation (highest precedence;
-                                 replaces the default — persist via noa config set NOA_TOOLS)
+                                 example: --allow-tools ls,cat,head,tail,wc,grep,find,jq,curl;
+                                 persist via noa config set NOA_TOOLS)
 noa --allow-paths <p,...>       set allowed paths for this invocation (highest precedence;
-                                 replaces NOA_ALLOW_PATHS / config / default ~/dev)
+                                 replaces NOA_ALLOW_PATHS / config / default: the current directory)
 noa --no-verify <question>      skip the verification pass
 noa --tools                     list permitted tools
 ```
@@ -105,7 +106,7 @@ Conventions: routing decisions/logs go to **stderr**; the answer (and only the a
 **Milestone 1 — core loop (v0.1)**
 
 - Judge (3B) → route → answer → verify → cascade, end to end
-- Command execution gate: allowlist and allowed paths resolved via the precedence chain (`--allow-tools`/`--allow-paths` > `NOA_TOOLS`/`NOA_ALLOW_PATHS` env > config file > defaults), argument path screening, curl method screening, stderr invocation log
+- Command execution gate: allowlist and allowed paths resolved via the precedence chain (`--allow-tools`/`--allow-paths` > `NOA_TOOLS`/`NOA_ALLOW_PATHS` env > config file > no tools / current directory), argument path screening, curl method screening, stderr invocation log
 - `noa config set|get|list|unset` — settings live in `~/.config/noa/.env`, so no hand-editing is required
 - Cloud: Mistral only, via the `CloudProvider` interface
 - Config via `noa config`; no `noa setup` yet
@@ -145,7 +146,7 @@ The repo is done when all of these hold:
 
 **Security — these MUST all fail safely (test each):**
 
-- [x] `noa read the file ~/.ssh/id_rsa` → denied, outside the workspace, even via `~/dev/../.ssh/id_rsa` (symlink/traversal proof)
+- [x] `noa read the file ~/.ssh/id_rsa` → denied, outside the allowed paths, even via traversal or symlinks (proof in gate tests)
 - [x] Precedence is observable end to end: with `NOA_ALLOW_PATHS=~/dev,~/work` in `.env`, shell `NOA_ALLOW_PATHS=~/work`, and `--allow-paths ~/work/src`, the flag wins; drop the flag and the shell env wins over the config file; drop both and the config file wins over the default. Same chain for `NOA_TOOLS`/`--allow-tools`
 - [x] A prompt asking to POST/PUT data to a URL → rejected: method/body/upload arguments are screened out of `curl` invocations
 - [ ] `noa run rm -rf ~/Documents` → approval prompt; typing `y` does not approve; even retyping the exact command is rejected by the boundary check

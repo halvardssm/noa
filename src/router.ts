@@ -103,7 +103,17 @@ export async function cascade(
     }
 
     log(`tier: ${tier} (attempting)`);
-    const answer = await agentLoop(judgment.improvedPrompt, tier, deps, log);
+    let answer: string;
+    try {
+      answer = await agentLoop(judgment.improvedPrompt, tier, deps, log);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("Ollama is not running")) throw error;
+      // A broken tier (model missing, HTTP error) escalates rather than
+      // crashing the whole request.
+      log(`tier: ${tier} failed (${message}) — escalating`);
+      continue;
+    }
     if (answer === "") {
       log(`tier: ${tier} produced no answer (escalating)`);
       continue;

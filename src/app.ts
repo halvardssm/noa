@@ -1,4 +1,9 @@
-import { DEFAULT_ALLOW_TOOLS, defaultAllowPaths, resolveList } from "./config.ts";
+import {
+  defaultAllowPaths,
+  isUnderHome,
+  resolveList,
+  SUGGESTED_TOOLS,
+} from "./config.ts";
 import { ollamaChat } from "./ollama.ts";
 import { mistralProvider } from "./cloud.ts";
 import { createGate, type Gate } from "./tools.ts";
@@ -27,6 +32,8 @@ export interface AppOptions {
   readonly model?: string;
   /** `--no-verify`. */
   readonly noVerify?: boolean;
+  /** Working directory; the default allowed path. Defaults to cwd. */
+  readonly cwd?: string;
   /** Log sink (stderr in the CLI). */
   readonly onLog: (message: string) => void;
   /** Fetch implementation for the model providers. */
@@ -47,23 +54,42 @@ export interface App {
 
 /** Assembles settings, gate, providers, and the cascade. */
 export async function createApp(options: AppOptions): Promise<App> {
+  const cwd = options.cwd ?? Deno.cwd();
   const allowTools = resolveList({
     flag: options.allowToolsFlag,
     env: options.env.get("NOA_TOOLS"),
     file: options.fileValues["NOA_TOOLS"],
-    defaults: DEFAULT_ALLOW_TOOLS,
+    defaults: [],
   });
+  const pathsConfigured = options.allowPathsFlag !== undefined ||
+    options.env.get("NOA_ALLOW_PATHS") !== undefined ||
+    options.fileValues["NOA_ALLOW_PATHS"] !== undefined;
   const allowPaths = resolveList({
     flag: options.allowPathsFlag,
     env: options.env.get("NOA_ALLOW_PATHS"),
     file: options.fileValues["NOA_ALLOW_PATHS"],
-    defaults: defaultAllowPaths(),
+    defaults: defaultAllowPaths(cwd),
   });
+
+  if (allowTools.length === 0) {
+    options.onLog(
+      `no tools are allowed — pass --allow-tools or set NOA_TOOLS (example: --allow-tools ${SUGGESTED_TOOLS})`,
+    );
+  }
+  if (!pathsConfigured) {
+    const home = options.env.get("HOME");
+    if (home !== undefined && !isUnderHome(cwd, home)) {
+      options.onLog(
+        `allowing the current directory ${cwd}, which is outside your home — set NOA_ALLOW_PATHS or pass --allow-paths to choose deliberately`,
+      );
+    }
+  }
 
   const gate = await createGate({
     allowTools,
     allowPaths,
     homeDir: options.env.get("HOME"),
+    cwd: options.cwd,
     log: options.onLog,
   });
 

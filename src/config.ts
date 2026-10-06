@@ -1,25 +1,22 @@
 import { parse } from "@std/dotenv";
 
-/** The built-in default tool allowlist (security rule 3). */
-export const DEFAULT_ALLOW_TOOLS: readonly string[] = [
-  "ls",
-  "cat",
-  "head",
-  "tail",
-  "wc",
-  "grep",
-  "find",
-  "jq",
-  "curl",
-];
+/**
+ * The tool allowlist example, shown in the CLI help so the user can set it
+ * themselves (security rule 3: no allowlist is granted by default).
+ */
+export const SUGGESTED_TOOLS = "ls,cat,head,tail,wc,grep,find,jq,curl";
 
-/** The built-in default allowed paths (security rule 1): `~/dev`. */
-export function defaultAllowPaths(): string[] {
-  const home = Deno.env.get("HOME");
-  if (home === undefined) {
-    throw new Error("HOME is not set; cannot resolve the default workspace");
-  }
-  return [`${home}/dev`];
+/**
+ * The built-in default allowed path (security rule 1): the current
+ * directory — the narrowest scope that is still useful.
+ */
+export function defaultAllowPaths(cwd?: string): string[] {
+  return [cwd ?? Deno.cwd()];
+}
+
+/** Whether `path` is `home` itself or inside one of its folders. */
+export function isUnderHome(path: string, home: string): boolean {
+  return path === home || path.startsWith(`${home}/`);
 }
 
 /** The directory holding noa config: `NOA_HOME` or `~/.config/noa`. */

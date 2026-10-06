@@ -1,15 +1,31 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import {
-  DEFAULT_ALLOW_TOOLS,
   defaultAllowPaths,
   formatValue,
   isSecretKey,
+  isUnderHome,
   loadEnvFile,
   maskValue,
   resolveList,
   setEnvValue,
+  SUGGESTED_TOOLS,
   unsetEnvValue,
 } from "../src/config.ts";
+
+Deno.test("resolveList: falls back to defaults", () => {
+  assertEquals(resolveList({ defaults: ["x"] }), ["x"]);
+});
+
+Deno.test("resolveList: an empty default yields no entries", () => {
+  assertEquals(resolveList({ defaults: [] }), []);
+});
+
+Deno.test("SUGGESTED_TOOLS: is the example shown in the CLI help", () => {
+  assertEquals(
+    SUGGESTED_TOOLS,
+    "ls,cat,head,tail,wc,grep,find,jq,curl",
+  );
+});
 
 Deno.test("resolveList: flag wins over env, file, and defaults", () => {
   const list = resolveList({
@@ -38,20 +54,21 @@ Deno.test("resolveList: file wins over defaults when env is absent", () => {
   assertEquals(list, ["~/dev", "~/work"]);
 });
 
-Deno.test("resolveList: falls back to defaults", () => {
-  assertEquals(resolveList({ defaults: ["~/dev"] }), ["~/dev"]);
-  assertEquals(resolveList({ defaults: DEFAULT_ALLOW_TOOLS }), [
-    ...DEFAULT_ALLOW_TOOLS,
-  ]);
-});
-
 Deno.test("resolveList: trims entries, drops empties, dedupes", () => {
   const list = resolveList({ flag: " git , rg , ,git, ", defaults: [] });
   assertEquals(list, ["git", "rg"]);
 });
 
-Deno.test("defaultAllowPaths: is $HOME/dev", () => {
-  assertEquals(defaultAllowPaths(), [`${Deno.env.get("HOME")}/dev`]);
+Deno.test("defaultAllowPaths: is the current directory", () => {
+  assertEquals(defaultAllowPaths(), [Deno.cwd()]);
+  assertEquals(defaultAllowPaths("/tmp/somewhere"), ["/tmp/somewhere"]);
+});
+
+Deno.test("isUnderHome: true only inside home or home itself", () => {
+  assertEquals(isUnderHome("/home/u", "/home/u"), true);
+  assertEquals(isUnderHome("/home/u/dev/x", "/home/u"), true);
+  assertEquals(isUnderHome("/home/university", "/home/u"), false);
+  assertEquals(isUnderHome("/tmp", "/home/u"), false);
 });
 
 Deno.test("setEnvValue: creates file with mode 600 and parent dirs", async () => {

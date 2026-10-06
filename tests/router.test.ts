@@ -218,6 +218,54 @@ Deno.test("cascade: tool errors are reported back to the model, not thrown", asy
   assert(fx.gateCalls.length === 0);
 });
 
+Deno.test("cascade: a failing tier escalates instead of crashing", async () => {
+  const { fx, deps } = fixture({
+    judge: [judgmentJson("local3b", "improved")],
+    local3b: [], // replaced below: throws
+    local8b: ["good answer"],
+    verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
+  });
+  const deps2 = {
+    ...deps,
+    chatFor: (purpose: string) => {
+      if (purpose === "local3b") {
+        return () => {
+          throw new Error(
+            "Ollama ministral-3:3b: HTTP 404 — is the model pulled? run `ollama pull ministral-3:3b`",
+          );
+        };
+      }
+      return (deps.chatFor as (p: string) => ChatFn)(purpose);
+    },
+  };
+  const answer = await cascade("q", deps2);
+  assertEquals(answer, "good answer");
+  assert(fx.logs.some((l) => l.includes("local3b failed") && l.includes("escalating")));
+});
+
+Deno.test("cascade: a daemon-down error is fatal, not skippable", async () => {
+  const { deps } = fixture({
+    judge: [judgmentJson("local3b", "improved")],
+    local3b: ["never"],
+    verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
+  });
+  const deps2 = {
+    ...deps,
+    chatFor: (purpose: string) => {
+      if (purpose === "local3b") {
+        return () => {
+          throw new Error(
+            "Ollama is not running at http://localhost:11434 — start it with `ollama serve`",
+          );
+        };
+      }
+      return (deps.chatFor as (p: string) => ChatFn)(purpose);
+    },
+  };
+  const error = await assertRejects(() => cascade("q", deps2), Error);
+  assert(error.message.includes("Ollama is not running"));
+});
+
 Deno.test("cascade: --no-verify returns the first answer", async () => {
   const { fx, deps } = fixture({
     judge: [judgmentJson("local3b", "improved")],

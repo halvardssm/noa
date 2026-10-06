@@ -9,7 +9,7 @@ export interface Verdict {
 
 const VERIFY_SYSTEM = `You verify that an answer is acceptable for a question.
 
-Be conservative: answer PASS unless the answer is CLEARLY deficient — wrong, incomplete for what was asked, or off-question. Uncertainty passes. A shorter or differently-worded answer than you would give still passes.
+Be conservative: answer PASS unless the answer is CLEARLY deficient — wrong, incomplete for what was asked, or off-question. The answer satisfies the question when it contains the requested information; differences in wording, format, style, or brevity are not deficiencies. If the user asked to run a command and the answer shows that command's output, that passes. Uncertainty passes.
 
 Respond with ONLY a JSON object: {"verdict": "PASS" | "FAIL", "reason": "one short sentence"}`;
 

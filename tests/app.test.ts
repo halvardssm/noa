@@ -1,6 +1,5 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { createApp } from "../src/app.ts";
-import { DEFAULT_ALLOW_TOOLS } from "../src/config.ts";
 import type { FetchFn, ResponseLike } from "../src/http.ts";
 
 function jsonResponse(body: unknown, status = 200): ResponseLike {
@@ -37,10 +36,76 @@ Deno.test("app: resolves allowlist and paths by precedence", async () => {
   assertEquals(app.allowPaths, ["~/dev", "~/work"]);
 });
 
+Deno.test("app: no configured tools means no tools, with a hint", async () => {
+  const logs: string[] = [];
+  const app = await createApp({
+    env: envWith({}),
+    fileValues: {},
+    onLog: (m) => logs.push(m),
+  });
+  assertEquals(app.allowTools, []);
+  assert(logs.some((m) => m.includes("--allow-tools") && m.includes("ls,cat")));
+});
+
+Deno.test("app: default allowed path is the current directory", async () => {
+  const app = await createApp({
+    env: envWith({}),
+    fileValues: {},
+    onLog: () => {},
+    cwd: "/somewhere/inside/project",
+  });
+  assertEquals(app.allowPaths, ["/somewhere/inside/project"]);
+});
+
+Deno.test("app: warns when the default path is outside home, not when configured", async () => {
+  const warned: string[] = [];
+  const app = await createApp({
+    env: envWith({}),
+    fileValues: {},
+    onLog: (m) => warned.push(m),
+    cwd: "/srv/project",
+  });
+  assert(warned.some((m) => m.includes("outside your home")));
+
+  // An explicit choice (flag, env, or config) never warns.
+  const quiet: string[] = [];
+  await createApp({
+    env: envWith({}),
+    fileValues: {},
+    allowPathsFlag: "/srv/project",
+    onLog: (m) => quiet.push(m),
+    cwd: "/srv/project",
+  });
+  assert(!quiet.some((m) => m.includes("outside your home")));
+
+  await createApp({
+    env: envWith({ NOA_ALLOW_PATHS: "/srv/project" }),
+    fileValues: {},
+    onLog: (m) => quiet.push(m),
+    cwd: "/srv/project",
+  });
+  assert(!quiet.some((m) => m.includes("outside your home")));
+
+  // Inside home: no warning either.
+  const home = Deno.env.get("HOME") ?? "/root";
+  await createApp({
+    env: envWith({}),
+    fileValues: {},
+    onLog: (m) => quiet.push(m),
+    cwd: `${home}/dev`,
+  });
+  assert(!quiet.some((m) => m.includes("outside your home")));
+});
+
 Deno.test("app: falls back to defaults for missing settings", async () => {
-  const app = await createApp({ env: envWith({}), fileValues: {}, onLog: () => {} });
-  assertEquals(app.allowTools, [...DEFAULT_ALLOW_TOOLS]);
-  assert(app.allowPaths[0].endsWith("/dev"));
+  const app = await createApp({
+    env: envWith({}),
+    fileValues: {},
+    onLog: () => {},
+    cwd: "/work/project",
+  });
+  assertEquals(app.allowTools, []);
+  assertEquals(app.allowPaths, ["/work/project"]);
 });
 
 Deno.test("app: ask routes through the local cascade end to end", async () => {

@@ -6,6 +6,7 @@ import {
   loadEnvFile,
   maskValue,
   setEnvValue,
+  SUGGESTED_TOOLS,
   unsetEnvValue,
 } from "./config.ts";
 import { createApp } from "./app.ts";
@@ -92,7 +93,8 @@ const root = defineCommand({
     },
     allowTools: {
       type: "string",
-      description: "tool allowlist for this invocation (replaces defaults)",
+      description:
+        `tool allowlist for this invocation, comma-separated (example: ${SUGGESTED_TOOLS})`,
     },
     allowPaths: {
       type: "string",
@@ -114,6 +116,12 @@ const root = defineCommand({
         allowToolsFlag: context.flags.allowTools,
         onLog: () => {},
       });
+      if (app.allowTools.length === 0) {
+        context.stderr(
+          `no tools are allowed — pass --allow-tools or set NOA_TOOLS (example: --allow-tools ${SUGGESTED_TOOLS})`,
+        );
+        return;
+      }
       context.stdout(app.allowTools.join("\n"));
       return;
     }

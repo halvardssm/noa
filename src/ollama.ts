@@ -108,7 +108,10 @@ export async function ollamaChat(
     );
   }
   if (!response.ok) {
-    throw new Error(`Ollama ${options.model}: HTTP ${response.status}`);
+    const hint = response.status === 404
+      ? ` — is the model pulled? run \`ollama pull ${options.model}\``
+      : "";
+    throw new Error(`Ollama ${options.model}: HTTP ${response.status}${hint}`);
   }
   const payload = response.json() as Promise<{
     message?: OllamaMessage;
