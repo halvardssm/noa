@@ -1,13 +1,15 @@
 import { defineCommand, runCommand, UsageError } from "@stdx/cli";
 import { promptSecret } from "@std/cli/prompt-secret";
 import {
-  configEnvPath,
+  configPath,
+  ensureConfig,
   isSecretKey,
-  loadEnvFile,
+  legacyEnvPath,
+  loadConfig,
   maskValue,
-  setEnvValue,
+  setConfigValue,
   SUGGESTED_TOOLS,
-  unsetEnvValue,
+  unsetConfigValue,
 } from "./config.ts";
 import { createApp } from "./app.ts";
 import { runSetup, type SetupInteract } from "./setup.ts";
@@ -59,7 +61,7 @@ const configSet = defineCommand({
       }
       value = await promptSecret(`Value for ${key}:`) ?? "";
     }
-    await setEnvValue(configEnvPath(Deno.env), key, value);
+    await setConfigValue(configPath(Deno.env), key, value);
     context.stderr(`set ${key}`);
   },
 });
@@ -70,13 +72,14 @@ const configGet = defineCommand({
   options: { show: { type: "boolean", description: "reveal secrets" } },
   args: [{ name: "key", required: true }],
   async run(context) {
-    const values = await loadEnvFile(configEnvPath(Deno.env));
+    const config = await loadConfig(configPath(Deno.env));
     const key = context.args.key;
-    if (!(key in values)) {
+    const value = config[key];
+    if (typeof value !== "string") {
       context.stderr(`${key} is not set`);
       return 1;
     }
-    context.stdout(maskValue(key, values[key], context.flags.show));
+    context.stdout(maskValue(key, value, context.flags.show));
   },
 });
 
@@ -85,9 +88,15 @@ const configList = defineCommand({
   description: "List all settings (values masked)",
   options: { show: { type: "boolean", description: "reveal secrets" } },
   async run(context) {
-    const values = await loadEnvFile(configEnvPath(Deno.env));
-    for (const [key, value] of Object.entries(values)) {
-      context.stdout(`${key}=${maskValue(key, value, context.flags.show)}`);
+    const config = await loadConfig(configPath(Deno.env));
+    for (const [key, value] of Object.entries(config)) {
+      if (Array.isArray(value)) {
+        context.stdout(`${key}=${JSON.stringify(value)}`);
+        continue;
+      }
+      context.stdout(
+        `${key}=${maskValue(key, String(value), context.flags.show)}`,
+      );
     }
   },
 });
@@ -97,7 +106,7 @@ const configUnset = defineCommand({
   description: "Remove a setting",
   args: [{ name: "key", required: true }],
   async run(context) {
-    const removed = await unsetEnvValue(configEnvPath(Deno.env), context.args.key);
+    const removed = await unsetConfigValue(configPath(Deno.env), context.args.key);
     context.stderr(
       removed ? `unset ${context.args.key}` : `${context.args.key} was not set`,
     );
@@ -137,12 +146,13 @@ const root = defineCommand({
   helpOnEmpty: true,
   async run(context) {
     const stderrLine = (message: string) => context.stderr(message);
-    const values = await loadEnvFile(configEnvPath(Deno.env));
+    await ensureConfig(configPath(Deno.env), legacyEnvPath(Deno.env));
+    const config = await loadConfig(configPath(Deno.env));
 
     if (context.flags.tools) {
       const app = await createApp({
         env: Deno.env,
-        fileValues: values,
+        fileValues: config,
         allowToolsFlag: context.flags.allowTools,
         onLog: () => {},
       });
@@ -163,7 +173,7 @@ const root = defineCommand({
 
     const app = await createApp({
       env: Deno.env,
-      fileValues: values,
+      fileValues: config,
       allowToolsFlag: context.flags.allowTools,
       allowPathsFlag: context.flags.allowPaths,
       model: context.flags.model,

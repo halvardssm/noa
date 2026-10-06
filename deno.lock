@@ -8,7 +8,8 @@
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/internal@^1.0.14": "1.0.14",
     "jsr:@std/text@1": "1.1.0",
-    "jsr:@stdx/cli@~0.1.1": "0.1.1"
+    "jsr:@stdx/cli@~0.1.1": "0.1.1",
+    "jsr:@zod/zod@^4.1.12": "4.6.5"
   },
   "jsr": {
     "@std/assert@1.0.19": {
@@ -38,6 +39,9 @@
         "jsr:@std/cli@1",
         "jsr:@std/text"
       ]
+    },
+    "@zod/zod@4.6.5": {
+      "integrity": "de9ee54513b84efecbdf2988f5a01eca0e2883be4b5625cf320bc0d6dbbade3e"
     }
   },
   "workspace": {
@@ -45,7 +49,8 @@
       "jsr:@std/assert@^1.0.13",
       "jsr:@std/cli@^1.0.32",
       "jsr:@std/dotenv@~0.225.8",
-      "jsr:@stdx/cli@~0.1.1"
+      "jsr:@stdx/cli@~0.1.1",
+      "jsr:@zod/zod@^4.1.12"
     ]
   }
 }

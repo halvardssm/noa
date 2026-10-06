@@ -63,7 +63,7 @@ Deno.test("cli: config set/get/list/unset round-trip with masking", async () => 
   await withHome(async (home) => {
     const set = await runCli(["config", "set", "MISTRAL_API_KEY", "sk-secret"], { NOA_HOME: home });
     assertEquals(set.code, 0);
-    const stat = await Deno.stat(`${home}/.env`);
+    const stat = await Deno.stat(`${home}/config.json`);
     assertEquals(stat.mode !== null && (stat.mode & 0o777), 0o600);
 
     const get = await runCli(["config", "get", "MISTRAL_API_KEY"], { NOA_HOME: home });
@@ -88,10 +88,11 @@ Deno.test("cli: config set/get/list/unset round-trip with masking", async () => 
 Deno.test("cli: config set preserves unrelated entries", async () => {
   await withHome(async (home) => {
     await Deno.mkdir(home, { recursive: true });
-    await Deno.writeTextFile(`${home}/.env`, "ZODIAC=leo\n");
+    await Deno.writeTextFile(`${home}/config.json`, '{"ZODIAC": "leo"}');
     await runCli(["config", "set", "NOA_TOOLS", "git,rg"], { NOA_HOME: home });
-    const text = await Deno.readTextFile(`${home}/.env`);
-    assertEquals(text, "ZODIAC=leo\nNOA_TOOLS=git,rg\n");
+    const text = await Deno.readTextFile(`${home}/config.json`);
+    const parsed = JSON.parse(text);
+    assertEquals(parsed, { ZODIAC: "leo", NOA_TOOLS: "git,rg" });
     const listed = await runCli(["config", "list"], { NOA_HOME: home });
     assert(listed.stdout.includes("ZODIAC=leo"));
     assert(listed.stdout.includes("NOA_TOOLS=git,rg"));

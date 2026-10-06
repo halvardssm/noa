@@ -2,6 +2,7 @@ import {
   defaultAllowPaths,
   isUnderHome,
   resolveList,
+  stringSetting,
   SUGGESTED_TOOLS,
 } from "./config.ts";
 import { ollamaChat } from "./ollama.ts";
@@ -34,13 +35,13 @@ const DEFAULT_TIER_MODELS: Readonly<Record<string, string>> = {
  */
 export function resolveLocalTiers(
   env: { get(name: string): string | undefined },
-  fileValues: Record<string, string>,
+  fileValues: Record<string, unknown>,
 ): LocalTiers {
   const models: Record<string, string> = {};
   const order: Tier[] = [];
   for (const tier of LOCAL_TIERS) {
     const setting = `NOA_MODEL_${tier.toUpperCase()}`;
-    const raw = env.get(setting) ?? fileValues[setting] ??
+    const raw = env.get(setting) ?? stringSetting(fileValues, setting) ??
       DEFAULT_TIER_MODELS[tier];
     if (raw === "" || raw === "none") continue;
     models[tier] = raw;
@@ -54,7 +55,7 @@ export interface AppOptions {
   /** Process environment reader. */
   readonly env: { get(name: string): string | undefined };
   /** Values from the config `.env` file. */
-  readonly fileValues: Record<string, string>;
+  readonly fileValues: Record<string, unknown>;
   /** `--allow-tools` flag. */
   readonly allowToolsFlag?: string;
   /** `--allow-paths` flag. */
@@ -94,16 +95,16 @@ export async function createApp(options: AppOptions): Promise<App> {
   const allowTools = resolveList({
     flag: options.allowToolsFlag,
     env: options.env.get("NOA_TOOLS"),
-    file: options.fileValues["NOA_TOOLS"],
+    file: stringSetting(options.fileValues, "NOA_TOOLS"),
     defaults: [],
   });
   const pathsConfigured = options.allowPathsFlag !== undefined ||
     options.env.get("NOA_ALLOW_PATHS") !== undefined ||
-    options.fileValues["NOA_ALLOW_PATHS"] !== undefined;
+    stringSetting(options.fileValues, "NOA_ALLOW_PATHS") !== undefined;
   const allowPaths = resolveList({
     flag: options.allowPathsFlag,
     env: options.env.get("NOA_ALLOW_PATHS"),
-    file: options.fileValues["NOA_ALLOW_PATHS"],
+    file: stringSetting(options.fileValues, "NOA_ALLOW_PATHS"),
     defaults: defaultAllowPaths(cwd),
   });
 
@@ -160,11 +161,11 @@ export async function createApp(options: AppOptions): Promise<App> {
     };
 
   const apiKey = (name: string): string =>
-    options.env.get(name) ?? options.fileValues[name] ?? "";
+    options.env.get(name) ?? stringSetting(options.fileValues, name) ?? "";
 
   /** Cloud providers in the user's preferred order (NOA_CLOUD). */
   const cloudOrder = (options.env.get("NOA_CLOUD") ??
-    options.fileValues["NOA_CLOUD"] ?? "mistral,claude")
+    stringSetting(options.fileValues, "NOA_CLOUD") ?? "mistral,claude")
     .split(",")
     .map((name) => name.trim())
     .filter((name) => name !== "");
@@ -175,7 +176,7 @@ export async function createApp(options: AppOptions): Promise<App> {
         mistralProvider({
           apiKey: apiKey("MISTRAL_API_KEY"),
           model: options.env.get("NOA_MISTRAL_MODEL") ??
-            options.fileValues["NOA_MISTRAL_MODEL"],
+            stringSetting(options.fileValues, "NOA_MISTRAL_MODEL"),
           fetchFn: options.fetchFn,
         }),
       );
@@ -184,7 +185,7 @@ export async function createApp(options: AppOptions): Promise<App> {
         anthropicProvider({
           apiKey: apiKey("ANTHROPIC_API_KEY"),
           model: options.env.get("NOA_ANTHROPIC_MODEL") ??
-            options.fileValues["NOA_ANTHROPIC_MODEL"],
+            stringSetting(options.fileValues, "NOA_ANTHROPIC_MODEL"),
           fetchFn: options.fetchFn,
         }),
       );

@@ -1,5 +1,5 @@
 import { ollamaBaseUrl, ollamaIsUp } from "./ollama.ts";
-import { configEnvPath, loadEnvFile, setEnvValue } from "./config.ts";
+import { configPath, setConfigValue } from "./config.ts";
 import type { FetchFn } from "./http.ts";
 
 /** Interactive pieces of setup, injectable for tests. */
@@ -137,33 +137,27 @@ export async function runSetup(options: SetupOptions): Promise<number> {
     }
   }
 
-  const configPath = options.configPath ?? configEnvPath(options.env);
-  let existing: Record<string, string> = {};
-  try {
-    existing = await loadEnvFile(configPath);
-  } catch {
-    // treat as missing
-  }
+  const config = options.configPath ?? configPath(options.env);
   let configExisted = true;
   try {
-    await Deno.stat(configPath);
+    await Deno.stat(config);
   } catch {
     configExisted = false;
   }
   if (!configExisted) {
-    out("configuring API keys (stored in " + configPath + ", chmod 600)");
+    out("configuring API keys (stored in " + config + ", chmod 600)");
     for (const [key, label] of [
       ["MISTRAL_API_KEY", "Mistral"],
       ["ANTHROPIC_API_KEY", "Anthropic"],
     ] as const) {
       const value = await options.interact.secret(`${label} API key (empty to skip):`);
       if (value !== null && value !== "") {
-        await setEnvValue(configPath, key, value);
+        await setConfigValue(config, key, value);
         out(`set ${key}`);
       }
     }
   } else {
-    out(`config already exists at ${configPath} — leaving keys untouched`);
+    out(`config already exists at ${config} — leaving keys untouched`);
   }
 
   out("setup complete — try: noa what is 2+2");

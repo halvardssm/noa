@@ -6,7 +6,7 @@ import {
   type SetupInteract,
 } from "../src/setup.ts";
 import type { FetchFn, ResponseLike } from "../src/http.ts";
-import { loadEnvFile } from "../src/config.ts";
+import { loadConfig } from "../src/config.ts";
 
 function ok(body: unknown = {}): ResponseLike {
   return { ok: true, status: 200, json: () => Promise.resolve(body) };
@@ -80,7 +80,7 @@ Deno.test("setup: full happy path — models pulled, keys prompted, profile writ
         get: (name: string) =>
           name === "HOME" ? home : name === "SHELL" ? "/bin/zsh" : undefined,
       },
-      configPath: `${cfg}/.env`,
+      configPath: `${cfg}/config.json`,
       interact,
       fetchFn,
       out: () => {},
@@ -91,7 +91,7 @@ Deno.test("setup: full happy path — models pulled, keys prompted, profile writ
     // Keys prompted only because .env did not exist.
     assert(interact.secrets.some((s) => s.includes("Mistral")));
     assert(interact.secrets.some((s) => s.includes("Anthropic")));
-    const values = await loadEnvFile(`${cfg}/.env`);
+    const values = await loadConfig(`${cfg}/config.json`);
     assertEquals(values.MISTRAL_API_KEY, "sk-mistral");
     assertEquals(values.ANTHROPIC_API_KEY, "sk-ant");
     const profile = await Deno.readTextFile(`${home}/.zshrc`);
@@ -107,7 +107,10 @@ Deno.test("setup: does not prompt for keys when .env already exists", async () =
   const home = await Deno.makeTempDir({ prefix: "noa-setup-home-" });
   const cfg = await Deno.makeTempDir({ prefix: "noa-setup-cfg-" });
   try {
-    await Deno.writeTextFile(`${cfg}/.env`, "MISTRAL_API_KEY=existing\n");
+    await Deno.writeTextFile(
+      `${cfg}/config.json`,
+      '{"MISTRAL_API_KEY": "existing"}',
+    );
     const interact = fakeInteract({ confirm: [true] });
     const fetchFn: FetchFn = async (url) => {
       if (String(url).endsWith("/api/tags")) return ok({ models: [] });
@@ -116,7 +119,7 @@ Deno.test("setup: does not prompt for keys when .env already exists", async () =
     };
     const result = await runSetup({
       env: { get: (name) => name === "HOME" ? home : undefined },
-      configPath: `${cfg}/.env`,
+      configPath: `${cfg}/config.json`,
       interact,
       fetchFn,
       out: () => {},
@@ -124,7 +127,7 @@ Deno.test("setup: does not prompt for keys when .env already exists", async () =
     assertEquals(result, 0);
     assertEquals(interact.secrets.length, 0);
     // Existing entries preserved.
-    const values = await loadEnvFile(`${cfg}/.env`);
+    const values = await loadConfig(`${cfg}/config.json`);
     assertEquals(values.MISTRAL_API_KEY, "existing");
   } finally {
     await Deno.remove(home, { recursive: true });
@@ -140,7 +143,7 @@ Deno.test("setup: a daemon that is down reports instructions instead of hanging"
     const fetchFn: FetchFn = () => Promise.reject(new TypeError("refused"));
     const result = await runSetup({
       env: { get: (name) => name === "HOME" ? home : undefined },
-      configPath: `${cfg}/.env`,
+      configPath: `${cfg}/config.json`,
       interact: fakeInteract({}),
       fetchFn,
       out: (line) => lines.push(line),
