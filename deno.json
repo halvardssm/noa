@@ -1,12 +1,14 @@
 {
   "name": "@halvardm/noa",
   "version": "0.1.0",
+  "license": "MIT",
   "exports": "./src/main.ts",
   "publish": {
     "include": [
       "src/**",
       "deno.json",
-      "README.md"
+      "README.md",
+      "LICENSE"
     ]
   },
   "nodeModulesDir": "none",

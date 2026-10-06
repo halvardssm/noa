@@ -164,4 +164,4 @@ The repo is done when all of these hold:
 
 ## License
 
-MIT (or your preference) — decide before `deno publish`; JSR requires a license field.
+MIT — see [LICENSE](./LICENSE).
