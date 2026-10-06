@@ -38,7 +38,7 @@ export const RUN_COMMAND_TOOL: ToolSpec = {
  */
 /** Where a tier's model is served: Ollama or a cloud provider. */
 export interface TierTarget {
-  /** `"ollama"`, `"mistral"`, or `"claude"`. */
+  /** `"ollama"`, `"mistral"`, or `"anthropic"`. */
   readonly provider: string;
   /** The model tag on that provider. */
   readonly model: string;
@@ -105,7 +105,7 @@ export async function cascade(
     if (forced.kind === "cloud") {
       const provider = clouds.find((p) => p.name === forced.provider);
       if (provider === undefined) {
-        const setting = forced.provider === "claude"
+        const setting = forced.provider === "anthropic"
           ? "ANTHROPIC_API_KEY"
           : "MISTRAL_API_KEY";
         throw new Error(

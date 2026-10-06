@@ -151,7 +151,7 @@ const root = defineCommand({
     provider: {
       type: "string",
       description:
-        "cloud provider for --model: mistral | claude (uses the provider's default model when --model is unset)",
+        "cloud provider for --model: mistral | anthropic (uses the provider's default model when --model is unset)",
     },
     allowTools: {
       type: "string",

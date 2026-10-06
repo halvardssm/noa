@@ -152,7 +152,7 @@ export async function anthropicChat(
 /** A `CloudProvider` backed by the Anthropic Messages API. */
 export function anthropicProvider(config: AnthropicConfig): CloudProvider {
   return {
-    name: "claude",
+    name: "anthropic",
     keySetting: "ANTHROPIC_API_KEY",
     chat: (prompt, model) => anthropicChat({ ...config, prompt, model }),
   };

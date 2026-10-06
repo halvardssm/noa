@@ -12,10 +12,10 @@ The cascade:
 Tier 0  local1  (default: Ministral 3 3B, always loaded, ~3GB) → answers easy things, classifies everything else
 Tier 1  local2  (default: Ministral 3 8B, loaded on demand)    → moderate tasks
 Tier 2  local3  (default: Ministral 3 14B, loaded on demand)   → demanding but self-contained tasks
-Tier 3  cloud   (Mistral / Claude APIs)                       → heavy reasoning, code generation, frontier tasks
+Tier 3  cloud   (Mistral / Anthropic APIs)                       → heavy reasoning, code generation, frontier tasks
 ```
 
-The tiers are semantic (difficulty), and there can be any number of them: the ordered `models` list in `config.json` defines both the models and the escalation order (position 1 = `local1`, and so on), each with an optional description the judge reads to route. Every entry has an optional `provider` property — unset (or `"ollama"`) means an Ollama model; `"mistral"` or `"claude"` puts a cloud model inside the cascade at that position. The judge assigns the tier; escalation only walks configured tiers. The implicit final cloud tier exists only when no entry in the list is a cloud model — a list containing one ends exactly where the user put it. An explicit empty list is a deliberate cloud-only setup (the judge is skipped; the raw question routes to cloud).
+The tiers are semantic (difficulty), and there can be any number of them: the ordered `models` list in `config.json` defines both the models and the escalation order (position 1 = `local1`, and so on), each with an optional description the judge reads to route. Every entry has an optional `provider` property — unset (or `"ollama"`) means an Ollama model; `"mistral"` or `"anthropic"` puts a cloud model inside the cascade at that position. The judge assigns the tier; escalation only walks configured tiers. The implicit final cloud tier exists only when no entry in the list is a cloud model — a list containing one ends exactly where the user put it. An explicit empty list is a deliberate cloud-only setup (the judge is skipped; the raw question routes to cloud).
 
 Flow of every request:
 
@@ -23,7 +23,7 @@ Flow of every request:
 2. If a local tier is chosen, it attempts the task (with tools, agent-loop style). Its answer is **verified** by a cheap local pass (`PASS`/`FAIL`). The verifier is biased conservative: it must see a clear deficiency (wrong, incomplete, or off-question) to say `FAIL` — uncertainty passes. Verification only runs on local answers; a cloud answer is final (there is nothing left to escalate to) and `--model`-forced tiers skip it.
 3. On failure (or a failed verification), it **escalates**: 3B → 8B → 14B → cloud.
 4. Cloud tiers receive the improved prompt, never the raw one.
-5. `--model` is a hard override naming one model, and the raw question goes to exactly that model — no judge, no verification, no escalation. Without `--provider`, `--model` is always an **Ollama** tag (or a `localN` tier); `--provider mistral|claude` makes it a cloud model on that provider (the provider's default model when `--model` is unset).
+5. `--model` is a hard override naming one model, and the raw question goes to exactly that model — no judge, no verification, no escalation. Without `--provider`, `--model` is always an **Ollama** tag (or a `localN` tier); `--provider mistral|anthropic` makes it a cloud model on that provider (the provider's default model when `--model` is unset).
 
 Design principles:
 
@@ -77,7 +77,7 @@ The package never writes inside its own install/repo directory. `deno install`, 
 - **Runtime:** Deno (TypeScript), JSR dependencies only (`@stdx/cli`, `@std/cli`, `@std/dotenv`, `@std/assert`, and `zod` via `jsr:@zod/zod` for config validation)
 - **CLI:** `defineCommand`/`runCommand`/`UsageError` from `@stdx/cli`; `promptSecret` from `@std/cli/prompt-secret`; `parse` from `@std/dotenv`
 - **Local inference:** Ollama (0.13.1+); the model cascade is user-defined in `config.json` as an ordered `models` list (any count, smallest to largest, each with an optional description the judge reads). Absent `models` falls back to `ministral-3:3b` / `:8b` / `:14b`. noa passes `num_ctx 8192` and `keep_alive 5m` per request, which achieves the memory cap without Modelfiles
-- **Cloud:** pluggable `CloudProvider` interface — Mistral Chat Completions and Anthropic Messages API ship, provider order configured by `NOA_CLOUD` (default `mistral,claude`), models overridable via `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL`; keys from `~/.config/noa/config.json` (env vars also work). Adding another provider is a one-file job.
+- **Cloud:** pluggable `CloudProvider` interface — Mistral Chat Completions and Anthropic Messages API ship, provider order configured by `NOA_CLOUD` (default `mistral,anthropic`), models overridable via `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL`; keys from `~/.config/noa/config.json` (env vars also work). Adding another provider is a one-file job.
 - **Publishing:** JSR package `@halvardm/noa`, entry `src/main.ts`
 
 ## CLI surface
@@ -94,7 +94,7 @@ noa --model <model> <question>  force one Ollama model — no routing, no verifi
                                  Examples (the defaults): ministral-3:3b | ministral-3:8b |
                                  ministral-3:14b; any Ollama tag or localN tier also works.
                                  For cloud models, pair with --provider.
-noa --provider <p> [model]      the cloud provider for --model: mistral | claude; the
+noa --provider <p> [model]      the cloud provider for --model: mistral | anthropic; the
                                  provider's default model is used when --model is unset
 noa --allow-tools <cmd,...>     set the tool allowlist for this invocation (highest precedence;
                                  example: --allow-tools ls,cat,head,tail,wc,grep,find,jq,curl;
@@ -135,10 +135,10 @@ All non-secret settings live in `~/.config/noa/config.json` (JSON, validated wit
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
-| `models` | ordered array of `{model, description?, provider?}` — the cascade, any count; `provider` unset = Ollama, `"mistral"`/`"claude"` = a cloud model in the cascade; explicit `[]` is cloud-only | `[{ministral-3:3b ...}, {ministral-3:8b ...}, {ministral-3:14b ...}]` with the standard descriptions |
+| `models` | ordered array of `{model, description?, provider?}` — the cascade, any count; `provider` unset = Ollama, `"mistral"`/`"anthropic"` = a cloud model in the cascade; explicit `[]` is cloud-only | `[{ministral-3:3b ...}, {ministral-3:8b ...}, {ministral-3:14b ...}]` with the standard descriptions |
 | `NOA_TOOLS` | Tool allowlist (comma-separated) | none (no tools callable) |
 | `NOA_ALLOW_PATHS` | Allowed paths (comma-separated) | current directory |
-| `NOA_CLOUD` | Cloud provider order | `mistral,claude` |
+| `NOA_CLOUD` | Cloud provider order | `mistral,anthropic` |
 | `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL` | Cloud model overrides | `mistral-large-latest` / `claude-sonnet-4-5` |
 | `MISTRAL_API_KEY` / `ANTHROPIC_API_KEY` | Cloud API keys (masked in output) | unset |
 | `NOA_HOME` | Config directory | `~/.config/noa` |
@@ -160,7 +160,7 @@ The repo is done when all of these hold:
 - [x] `noa what is 2+2` answers locally on the 3B, in seconds, with stderr showing the tier chosen
 - [ ] A moderate code question routes to 8B; a demanding one routes to 14B
 - [ ] A genuinely hard task cascades upward and, if all local tiers fail verification, reaches Claude or Mistral with the improved (rewritten) prompt — visible in stderr
-- [ ] `--model claude` forces cloud and works (code paths unit-tested; needs a live key for full confirmation)
+- [ ] `--provider anthropic` forces cloud and works (code paths unit-tested; needs a live key for full confirmation)
 - [x] With no API keys configured, hard tasks fail gracefully with a clear message (never a stack trace about missing keys mid-cascade)
 
 **Memory**

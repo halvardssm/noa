@@ -60,7 +60,7 @@ export interface AppOptions {
   readonly allowPathsFlag?: string;
   /** `--model` flag: an Ollama tag or a `localN` tier (Ollama-only without --provider). */
   readonly model?: string;
-  /** `--provider` flag: the cloud provider for `--model` (mistral | claude). */
+  /** `--provider` flag: the cloud provider for `--model` (mistral | anthropic). */
   readonly provider?: string;
   /** `--no-verify`. */
   readonly noVerify?: boolean;
@@ -170,7 +170,7 @@ export async function createApp(options: AppOptions): Promise<App> {
 
   /** Cloud providers in the user's preferred order (NOA_CLOUD). */
   const cloudOrder = (options.env.get("NOA_CLOUD") ??
-    stringSetting(options.fileValues, "NOA_CLOUD") ?? "mistral,claude")
+    stringSetting(options.fileValues, "NOA_CLOUD") ?? "mistral,anthropic")
     .split(",")
     .map((name) => name.trim())
     .filter((name) => name !== "");
@@ -185,7 +185,7 @@ export async function createApp(options: AppOptions): Promise<App> {
           fetchFn: options.fetchFn,
         }),
       );
-    } else if (name === "claude" && apiKey("ANTHROPIC_API_KEY") !== "") {
+    } else if (name === "anthropic" && apiKey("ANTHROPIC_API_KEY") !== "") {
       clouds.push(
         anthropicProvider({
           apiKey: apiKey("ANTHROPIC_API_KEY"),
@@ -257,7 +257,7 @@ export function forcedTargetOf(
   anthropicModel: string,
 ): ForcedTarget | undefined {
   if (provider !== undefined) {
-    if (provider !== "mistral" && provider !== "claude") {
+    if (provider !== "mistral" && provider !== "anthropic") {
       throw new Error(
         `unknown provider "${provider}" — use mistral or claude`,
       );

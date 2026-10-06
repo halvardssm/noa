@@ -223,7 +223,7 @@ Deno.test("cascade: a failing cloud provider falls through to the next", async (
         chat: () => Promise.reject(new Error("Mistral API: HTTP 429")),
       },
       {
-        name: "claude",
+        name: "anthropic",
         keySetting: "ANTHROPIC_API_KEY",
         chat: () => Promise.resolve("claude answer"),
       },
@@ -231,20 +231,20 @@ Deno.test("cascade: a failing cloud provider falls through to the next", async (
   });
   assertEquals(answer, "claude answer");
   assert(fx.logs.some((l) => l.includes("mistral failed")));
-  assert(fx.logs.some((l) => l.includes("claude")));
+  assert(fx.logs.some((l) => l.includes("anthropic")));
 });
 
-Deno.test("cascade: forced claude without configuration names its key", async () => {
+Deno.test("cascade: forced anthropic without configuration names its key", async () => {
   const { deps } = fixture({
     judge: [judgmentJson("local1", "improved")],
     local1: ["answer"],
     verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
   });
   const error = await assertRejects(
-    () => cascade("q", { ...deps, forced: { kind: "cloud", provider: "claude" } }),
+    () => cascade("q", { ...deps, forced: { kind: "cloud", provider: "anthropic" } }),
     Error,
   );
-  assert(error.message.includes("claude is not configured"));
+  assert(error.message.includes("anthropic is not configured"));
   assert(error.message.includes("ANTHROPIC_API_KEY"));
 });
 
@@ -265,7 +265,7 @@ Deno.test("cascade: all cloud providers failing reports every failure", async ()
             chat: () => Promise.reject(new Error("HTTP 429")),
           },
           {
-            name: "claude",
+            name: "anthropic",
             keySetting: "ANTHROPIC_API_KEY",
             chat: () => Promise.reject(new Error("HTTP 500")),
           },
@@ -274,7 +274,7 @@ Deno.test("cascade: all cloud providers failing reports every failure", async ()
     Error,
   );
   assert(error.message.includes("mistral: HTTP 429"));
-  assert(error.message.includes("claude: HTTP 500"));
+  assert(error.message.includes("anthropic: HTTP 500"));
 });
 
 Deno.test("cascade: no cloud provider gives a clear message, not a crash", async () => {

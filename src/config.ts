@@ -14,7 +14,7 @@ export interface ModelEntry {
   /** What this model is for; the judge reads it to route. Optional. */
   readonly description?: string;
   /** Which provider serves this model; unset (or "ollama") means Ollama. */
-  readonly provider?: "ollama" | "mistral" | "claude";
+  readonly provider?: "ollama" | "mistral" | "anthropic";
 }
 
 /** Schema of one cascade entry: a bare model tag, or model + metadata. */
@@ -23,7 +23,7 @@ const modelEntrySchema: z.ZodType<ModelEntry> = z.union([
   z.object({
     model: z.string().min(1),
     description: z.string().min(1).optional(),
-    provider: z.enum(["ollama", "mistral", "claude"]).optional(),
+    provider: z.enum(["ollama", "mistral", "anthropic"]).optional(),
   }),
 ]);
 

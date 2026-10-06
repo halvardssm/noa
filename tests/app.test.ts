@@ -281,7 +281,7 @@ Deno.test("app: cloud order follows NOA_CLOUD with only configured providers", a
   const fetchFn: FetchFn = async (url, init) => {
     if (String(url).includes("anthropic.com")) {
       prompts.push(JSON.parse((init as RequestInit).body as string).messages[0].content);
-      return jsonResponse({ content: [{ type: "text", text: "claude" }] });
+      return jsonResponse({ content: [{ type: "text", text: "anthropic" }] });
     }
     if (String(url).includes("mistral.ai")) {
       prompts.push(JSON.parse((init as RequestInit).body as string).messages[0].content);
@@ -294,14 +294,14 @@ Deno.test("app: cloud order follows NOA_CLOUD with only configured providers", a
   };
   // Only claude is configured; mistral in the order is skipped.
   const app = await createApp({
-    env: envWith({ ANTHROPIC_API_KEY: "sk-ant", NOA_CLOUD: "mistral,claude" }),
+    env: envWith({ ANTHROPIC_API_KEY: "sk-ant", NOA_CLOUD: "mistral,anthropic" }),
     fileValues: {},
-    provider: "claude",
+    provider: "anthropic",
     onLog: () => {},
     fetchFn,
   });
   const answer = await app.ask("hard task");
-  assertEquals(answer, "claude");
+  assertEquals(answer, "anthropic");
   assertEquals(prompts, ["hard task"]);
 });
 
@@ -346,9 +346,9 @@ Deno.test("app: forcedTargetOf maps ollama tags, tiers, and provider pairs", asy
     provider: "mistral",
     model: "mistral-small-latest",
   });
-  assertEquals(forcedTargetOf(undefined, "claude", M, C), {
+  assertEquals(forcedTargetOf(undefined, "anthropic", M, C), {
     kind: "cloud",
-    provider: "claude",
+    provider: "anthropic",
     model: C,
   });
   assertEquals(forcedTargetOf(undefined, "mistral", M, C), {
