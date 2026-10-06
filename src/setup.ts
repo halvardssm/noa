@@ -120,11 +120,20 @@ export async function runSetup(options: SetupOptions): Promise<number> {
       } catch {
         // Missing profile: create it.
       }
-      await Deno.writeTextFile(
-        profile,
-        appendEnvExports(text, OLLAMA_ENV_EXPORTS),
-      );
-      out(`wrote the memory cap to ${profile}`);
+      try {
+        await Deno.writeTextFile(
+          profile,
+          appendEnvExports(text, OLLAMA_ENV_EXPORTS),
+        );
+        out(`wrote the memory cap to ${profile}`);
+      } catch {
+        out(
+          `cannot write ${profile} — this binary's permission flags exclude it; add these lines yourself:`,
+        );
+        for (const [name, value] of Object.entries(OLLAMA_ENV_EXPORTS)) {
+          out(`  export ${name}=${value}`);
+        }
+      }
     }
   }
 

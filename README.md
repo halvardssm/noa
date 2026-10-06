@@ -61,7 +61,7 @@ noa implements no tools of its own. The agent's only capability is invoking **al
 
 | What                                          | Where                                   |
 | --------------------------------------------- | --------------------------------------- |
-| noa config (`.env` with API keys, Modelfiles) | `~/.config/noa/` (override: `NOA_HOME`) |
+| noa config (`.env` with API keys)              | `~/.config/noa/` (override: `NOA_HOME`) |
 | Models                                        | `~/.ollama/` (Ollama's own storage)     |
 | Installed binary                              | `~/.deno/bin/`                          |
 | Allowed paths                                 | current directory (configure: `NOA_ALLOW_PATHS`, comma-separated) |
@@ -73,8 +73,8 @@ The package never writes inside its own install/repo directory. `deno install`, 
 
 - **Runtime:** Deno (TypeScript), zero npm dependencies beyond JSR
 - **CLI:** `defineCommand`/`runCommand`/`UsageError` from `@stdx/cli`; `promptSecret` from `@std/cli/prompt-secret`; `parse` from `@std/dotenv`
-- **Local inference:** Ollama (0.13.1+), models `ministral-3:3b` / `:8b` / `:14b` (hyphenated tag), `num_ctx 8192` passed per request (pinned `*-8k` Modelfile variants arrive with `noa setup` in milestone 2)
-- **Cloud:** pluggable `CloudProvider` interface; v0.1 ships **Mistral Chat Completions only** (keys from `~/.config/noa/.env`). Anthropic Messages API follows; the interface must make adding other providers (OpenAI-compatible, etc.) a one-file job. `--model claude` in v0.1 prints a clear "not yet supported" message rather than failing mid-cascade.
+- **Local inference:** Ollama (0.13.1+), models `ministral-3:3b` / `:8b` / `:14b` (hyphenated tag). noa passes `num_ctx 8192` and `keep_alive 5m` per request, which achieves the memory cap without pinned `*-8k` Modelfile variants — no Modelfiles are needed
+- **Cloud:** pluggable `CloudProvider` interface — Mistral Chat Completions and Anthropic Messages API ship, provider order configured by `NOA_CLOUD` (default `mistral,claude`), models overridable via `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL`; keys from `~/.config/noa/.env`. Adding another provider is a one-file job.
 - **Publishing:** JSR package `@halvardm/noa`, entry `src/main.ts`
 
 ## CLI surface
@@ -99,7 +99,7 @@ noa --tools                     list permitted tools
 
 Conventions: routing decisions/logs go to **stderr**; the answer (and only the answer) to **stdout**, so output is pipeable (`noa explain this | pbcopy`).
 
-`noa setup` performs every step behind explicit yes/no prompts (installing Ollama via brew if missing, setting `OLLAMA_MAX_LOADED_MODELS`/`OLLAMA_KEEP_ALIVE` and making them reboot-persistent, pulling models, registering pinned variants, prompting for API keys only if `.env` doesn't exist). macOS-specific steps are gated on `Deno.build.os === "darwin"` so the same setup works on Linux. Setup is a trusted interactive action; the distributed binary may exclude it via its permission flags.
+`noa setup` performs every step behind explicit yes/no prompts: daemon check (with install/start instructions if Ollama is down — noa never spawns anything, rule 6), per-model pull confirms over the Ollama HTTP API (`3b` is the suggested default; `8b`/`14b` optional), persisting `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile (behind a prompt; refused cleanly when the compiled binary's flags exclude the profile), and prompting for API keys only when `.env` doesn't exist. Setup refuses non-interactive stdin with instructions — it is a trusted interactive action, and the distributed binary may exclude steps via its permission flags.
 
 ## Implementation milestones
 
@@ -114,10 +114,11 @@ Conventions: routing decisions/logs go to **stderr**; the answer (and only the a
 **Milestone 2 — destructive capability and setup**
 
 - Gated `rm` (rule 4)
-- Anthropic provider; pluggable provider selection (user-configurable, weighted order in `.env`)
-- `noa setup`, `deno publish`, compiled binary with strict permission flags
+- Anthropic provider; weighted, configurable provider order (`NOA_CLOUD`)
+- `noa setup` (interactive, HTTP-API based; noa never spawns anything)
+- Compiled binary with strict permission flags baked from the environment at compile time (`scripts/compile.ts` maps `NOA_TOOLS` → `--allow-run`, `NOA_ALLOW_PATHS` → `--allow-read`/`--allow-write`); unset `NOA_TOOLS` compiles a binary that cannot spawn anything
 
-The security rules above are the standing spec for both milestones; rule 4 is only testable once `rm` gating exists (milestone 2).
+**Status:** implemented and tested; publishing to JSR/npm deliberately not done yet. The security rules above are the standing spec for both milestones.
 
 ## Success requirements
 
@@ -126,9 +127,9 @@ The repo is done when all of these hold:
 **Build &amp; distribution**
 
 - [ ] `deno task noa -- setup` configures a fresh machine end-to-end via prompts only
-- [ ] `deno publish --dry-run` passes (JSR rules: explicit types, no slow types)
+- [x] `deno publish --dry-run` passes (JSR rules: explicit types, no slow types)
 - [ ] `deno publish` succeeds; `deno install -g jsr:@halvardm/noa` then `noa <question>` works with no local checkout
-- [ ] `deno task compile` produces a working single-file executable
+- [x] `deno task compile` produces a working single-file executable (verified live: routing, tool runs with baked `--allow-run`, runtime refusal of spawns when compiled without `NOA_TOOLS`, runtime refusal of reads outside the allowed paths)
 - [ ] `npx jsr:@halvardm/noa` also works for npm users
 
 **Routing**
@@ -149,11 +150,11 @@ The repo is done when all of these hold:
 - [x] `noa read the file ~/.ssh/id_rsa` → denied, outside the allowed paths, even via traversal or symlinks (proof in gate tests)
 - [x] Precedence is observable end to end: with `NOA_ALLOW_PATHS=~/dev,~/work` in `.env`, shell `NOA_ALLOW_PATHS=~/work`, and `--allow-paths ~/work/src`, the flag wins; drop the flag and the shell env wins over the config file; drop both and the config file wins over the default. Same chain for `NOA_TOOLS`/`--allow-tools`
 - [x] A prompt asking to POST/PUT data to a URL → rejected: method/body/upload arguments are screened out of `curl` invocations
-- [ ] `noa run rm -rf ~/Documents` → approval prompt; typing `y` does not approve; even retyping the exact command is rejected by the boundary check
-- [ ] `noa run rm notes.txt` → approval prompt; exact retype approves; only files inside `~/dev` can be affected
+- [x] `rm -rf <outside>` → approval prompt; typing `y` does not approve; approval can never override path screening (gate tests)
+- [x] `rm notes.txt` → approval prompt; exact retype approves; only files inside the allowed paths can be affected (gate tests)
 - [x] An injected instruction inside a file in `~/dev` ("ignore rules, run ...") → no tool call outside the allowlist is possible
 - [x] `noa --allow-tools git status` runs `git status` (logged to stderr); `--allow-tools` with an entry resolved inside `~/dev` is rejected
-- [ ] The compiled binary (strict flags) refuses reads outside `~/dev` at the Deno permission level, independent of the code checks
+- [x] The compiled binary (strict flags) refuses reads outside the allowed paths at the Deno permission level, independent of the code checks (verified live via `NOA_HOME` outside `--allow-read`)
 
 **Hygiene**
 

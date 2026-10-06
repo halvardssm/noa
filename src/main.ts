@@ -20,7 +20,7 @@ const terminalInteract: SetupInteract = {
     const answer = await promptSecret(`${message} [y/N]`) ?? "";
     return /^(y|yes)$/i.test(answer.trim());
   },
-  secret: (message) => promptSecret(`${message}`),
+  secret: async (message) => promptSecret(message),
 };
 
 const setup = defineCommand({

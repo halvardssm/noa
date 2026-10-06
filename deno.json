@@ -15,7 +15,7 @@
   "tasks": {
     "noa": "deno run --allow-net --allow-env=NOA_HOME,NOA_TOOLS,NOA_ALLOW_PATHS,HOME,MISTRAL_API_KEY,OLLAMA_HOST --allow-read=$PWD,$HOME/.config/noa --allow-write=$PWD,$HOME/.config/noa --allow-run=ls,cat,head,tail,wc,grep,find,jq,curl src/main.ts",
     "dev": "deno run -A --watch src/main.ts",
-    "compile": "deno compile -A --output compiled/noa src/main.ts",
+    "compile": "deno run --allow-env --allow-run=deno scripts/compile.ts",
     "test": "deno test -A"
   },
   "imports": {
