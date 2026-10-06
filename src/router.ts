@@ -1,7 +1,7 @@
 import type { ChatAnswer, ChatMessage, ToolSpec } from "./ollama.ts";
 import type { CloudProvider } from "./cloud.ts";
 import type { RunResult } from "./tools.ts";
-import { judge, type Judgment, type Tier } from "./judge.ts";
+import { judge, LOCAL_TIERS, type Judgment, type Tier } from "./judge.ts";
 import { verify } from "./verify.ts";
 
 /** A chat function bound to a model, with JSON mode and tool support. */
@@ -9,9 +9,6 @@ export type ChatFn = (
   messages: readonly ChatMessage[],
   options?: { json?: boolean; tools?: readonly ToolSpec[] },
 ) => Promise<ChatAnswer>;
-
-/** The local tiers in escalation order. */
-const LOCAL_TIERS: readonly Tier[] = ["local3b", "local8b", "local14b"];
 
 /** What the model may request: one allowlisted command run. */
 export const RUN_COMMAND_TOOL: ToolSpec = {
@@ -35,10 +32,15 @@ export const RUN_COMMAND_TOOL: ToolSpec = {
   },
 };
 
+/** A tier forced by `--model`; skips verification and the cascade. */
+export type ForcedTier = "local1" | "local2" | "local3" | "mistral" | "claude";
+
 /** Dependencies of the cascade, injected for testing. */
 export interface CascadeDeps {
   /** Chat function per purpose: `judge`, `verify`, or a tier name. */
   readonly chatFor: (purpose: string) => ChatFn;
+  /** The configured local tiers in escalation order (user-defined models). */
+  readonly localTiers: readonly Tier[];
   /** The execution gate the agent loop runs commands through. */
   readonly gate: {
     run(command: string, args: readonly string[]): Promise<RunResult>;
@@ -46,8 +48,7 @@ export interface CascadeDeps {
   /** The configured cloud providers, in user-preference order. */
   readonly clouds?: readonly CloudProvider[];
   /** A tier forced by `--model`; skips verification and the cascade. */
-  readonly forcedTier?: "local3b" | "local8b" | "local14b" | "mistral" |
-    "claude";
+  readonly forcedTier?: ForcedTier;
   /** Skip the verification pass (`--no-verify`). */
   readonly noVerify?: boolean;
   /** Log sink (stderr in the CLI). */
@@ -73,9 +74,9 @@ export async function cascade(
     ? deps.forcedTier
     : undefined;
   const clouds = deps.clouds ?? [];
+  const localTiers = deps.localTiers ?? [];
 
-  // A forced cloud tier must not require Ollama at all; fail fast with the
-  // config remedy before anything local runs.
+  // Fail fast with the config remedy before anything runs.
   if (forcedCloud !== undefined && !clouds.some((p) => p.name === forcedCloud)) {
     const setting = forcedCloud === "claude"
       ? "ANTHROPIC_API_KEY"
@@ -84,15 +85,49 @@ export async function cascade(
       `${forcedCloud} is not configured — run \`noa config set ${setting}\``,
     );
   }
+  const forcedLocal = deps.forcedTier !== undefined && forcedCloud === undefined
+    ? deps.forcedTier as Tier
+    : undefined;
+  if (forcedLocal !== undefined && !localTiers.includes(forcedLocal)) {
+    throw new Error(
+      `${forcedLocal} is disabled — set NOA_MODEL_${forcedLocal.toUpperCase()} or force another tier`,
+    );
+  }
 
-  const judgment: Judgment = await judge(question, {
-    chat: deps.chatFor("judge"),
-  });
+  // Without any local model there is nothing to judge with: the raw
+  // question goes straight to cloud (the improved prompt needs the judge).
+  if (localTiers.length === 0) {
+    if (clouds.length === 0) {
+      throw new Error(
+        "no local model is configured and no cloud provider is configured — set NOA_MODEL_LOCAL1 or a cloud API key",
+      );
+    }
+    log("no local models configured — routing to cloud with the raw question");
+    return cloudChain(question, clouds, forcedCloud, log);
+  }
+
+  let judgment: Judgment;
+  try {
+    judgment = await judge(question, {
+      chat: deps.chatFor("judge"),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Ollama is not running")) throw error;
+    // The judge's model is unavailable: route the raw question through the
+    // smallest configured tier and keep going.
+    log(`judge failed (${message}) — falling back to the raw question`);
+    judgment = {
+      tier: localTiers[0],
+      reason: "judge unavailable",
+      improvedPrompt: question,
+    };
+  }
   log(
     `judge: tier=${judgment.tier} reason=${judgment.reason || "(none)"} improved="${judgment.improvedPrompt}"`,
   );
 
-  const plan = planTiers(judgment.tier, deps.forcedTier);
+  const plan = planTiers(judgment.tier, deps.forcedTier, localTiers);
   const verifying = deps.forcedTier === undefined && !deps.noVerify;
 
   for (const tier of plan) {
@@ -102,21 +137,7 @@ export async function cascade(
           "no local model passed verification and no cloud provider is configured — run `noa config set MISTRAL_API_KEY` (or ANTHROPIC_API_KEY)",
         );
       }
-      const chain = forcedCloud !== undefined
-        ? clouds.filter((p) => p.name === forcedCloud)
-        : clouds;
-      const failures: string[] = [];
-      for (const provider of chain) {
-        log(`cloud: ${provider.name} (answer is final, no verification)`);
-        try {
-          return await provider.chat(judgment.improvedPrompt);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          log(`cloud: ${provider.name} failed (${message})`);
-          failures.push(`${provider.name}: ${message}`);
-        }
-      }
-      throw new Error(`all cloud providers failed — ${failures.join("; ")}`);
+      return cloudChain(judgment.improvedPrompt, clouds, forcedCloud, log);
     }
 
     log(`tier: ${tier} (attempting)`);
@@ -152,19 +173,49 @@ export async function cascade(
   throw new Error("the cascade exhausted every tier without an answer");
 }
 
-/** The escalation order from the judge's (or forced) starting tier. */
+/**
+ * The escalation order from the judge's (or forced) starting tier, walking
+ * only the configured local tiers. A judged-but-disabled tier starts at the
+ * next configured one; the plan always ends at cloud.
+ */
 export function planTiers(
   judged: Tier,
   forced: CascadeDeps["forcedTier"],
+  localTiers: readonly Tier[],
 ): Tier[] {
   if (forced === "mistral" || forced === "claude") return ["cloud"];
   const start = forced ?? judged;
-  const chain: Tier[] = [];
   if (start === "cloud") return ["cloud"];
   const startIdx = LOCAL_TIERS.indexOf(start);
-  for (const tier of LOCAL_TIERS.slice(startIdx)) chain.push(tier);
-  if (startIdx !== -1 || forced === undefined) chain.push("cloud");
+  const chain = localTiers.filter((tier) =>
+    LOCAL_TIERS.indexOf(tier) >= startIdx
+  );
+  chain.push("cloud");
   return chain;
+}
+
+/** Tries the configured cloud providers in order; returns the first answer. */
+async function cloudChain(
+  prompt: string,
+  clouds: readonly CloudProvider[],
+  forcedCloud: string | undefined,
+  log: (message: string) => void,
+): Promise<string> {
+  const chain = forcedCloud !== undefined
+    ? clouds.filter((p) => p.name === forcedCloud)
+    : clouds;
+  const failures: string[] = [];
+  for (const provider of chain) {
+    log(`cloud: ${provider.name} (answer is final, no verification)`);
+    try {
+      return await provider.chat(prompt);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log(`cloud: ${provider.name} failed (${message})`);
+      failures.push(`${provider.name}: ${message}`);
+    }
+  }
+  throw new Error(`all cloud providers failed — ${failures.join("; ")}`);
 }
 
 async function agentLoop(

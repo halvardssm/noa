@@ -11,7 +11,7 @@ function ollamaBody(content: string): ResponseLike {
 }
 
 const JUDGE_3B = JSON.stringify({
-  tier: "local3b",
+  tier: "local1",
   reason: "trivial",
   improved_prompt: "improved",
 });
@@ -164,6 +164,116 @@ Deno.test("app: mistral configured receives the improved prompt", async () => {
   const answer = await app.ask("hard task");
   assertEquals(answer, "cloud answer");
   assertEquals(prompts, ["improved"]);
+});
+
+Deno.test("app: custom local models are used per tier", async () => {
+  const seen: string[] = [];
+  const fetchFn: FetchFn = async (_url, init) => {
+    const body = JSON.parse((init as RequestInit).body as string);
+    seen.push(body.model);
+    const user = body.messages?.[body.messages.length - 1]?.content ?? "";
+    if (body.format === "json" && user.startsWith("Question:")) {
+      return ollamaBody(VERIFY_PASS);
+    }
+    if (body.format === "json") {
+      return ollamaBody(
+        JSON.stringify({ tier: "local2", reason: "x", improved_prompt: "p" }),
+      );
+    }
+    return ollamaBody("custom answer");
+  };
+  const app = await createApp({
+    env: envWith({ NOA_MODEL_LOCAL1: "qwen3:4b", NOA_MODEL_LOCAL2: "llama3.1:8b" }),
+    fileValues: { NOA_MODEL_LOCAL1: "ignored-because-env-wins" },
+    onLog: () => {},
+    fetchFn,
+  });
+  const answer = await app.ask("moderate question");
+  assertEquals(answer, "custom answer");
+  assert(seen.includes("qwen3:4b"), "judge runs on the first configured model");
+  assert(seen.includes("llama3.1:8b"), "the judged tier uses the user's model");
+});
+
+Deno.test("app: a tier set to none is disabled and skipped", async () => {
+  const fetchFn: FetchFn = async (_url, init) => {
+    const body = JSON.parse((init as RequestInit).body as string);
+    const user = body.messages?.[body.messages.length - 1]?.content ?? "";
+    if (body.format === "json" && user.startsWith("Question:")) {
+      return ollamaBody(VERIFY_PASS);
+    }
+    if (body.format === "json") {
+      return ollamaBody(
+        JSON.stringify({ tier: "local2", reason: "x", improved_prompt: "p" }),
+      );
+    }
+    return ollamaBody("from local3");
+  };
+  const app = await createApp({
+    env: envWith({ NOA_MODEL_LOCAL2: "none" }),
+    fileValues: {},
+    onLog: () => {},
+    fetchFn,
+  });
+  const answer = await app.ask("moderate question");
+  assertEquals(answer, "from local3");
+});
+
+Deno.test("app: with no local models at all, the raw question goes to cloud", async () => {
+  const prompts: string[] = [];
+  const fetchFn: FetchFn = async (url, init) => {
+    if (String(url).includes("mistral.ai")) {
+      prompts.push(JSON.parse((init as RequestInit).body as string).messages[0].content);
+      return jsonResponse({ choices: [{ message: { content: "cloud" } }] });
+    }
+    throw new Error("no ollama call expected");
+  };
+  const app = await createApp({
+    env: envWith({
+      MISTRAL_API_KEY: "sk",
+      NOA_MODEL_LOCAL1: "none",
+      NOA_MODEL_LOCAL2: "none",
+      NOA_MODEL_LOCAL3: "none",
+    }),
+    fileValues: {},
+    onLog: () => {},
+    fetchFn,
+  });
+  const answer = await app.ask("the raw question");
+  assertEquals(answer, "cloud");
+  assertEquals(prompts, ["the raw question"]);
+});
+
+Deno.test("app: forcing a disabled tier names its setting", async () => {
+  const app = await createApp({
+    env: envWith({ NOA_MODEL_LOCAL2: "none" }),
+    fileValues: {},
+    model: "local2",
+    onLog: () => {},
+  });
+  const error = await assertRejects(() => app.ask("q"), Error);
+  assert(error.message.includes("local2"));
+  assert(error.message.includes("NOA_MODEL_LOCAL2"));
+});
+
+Deno.test("app: local tier aliases from --model still resolve", async () => {
+  const fetchFn: FetchFn = async (_url, init) => {
+    const body = JSON.parse((init as RequestInit).body as string);
+    if (body.format === "json") {
+      return ollamaBody(
+        JSON.stringify({ tier: "local1", reason: "x", improved_prompt: "p" }),
+      );
+    }
+    return ollamaBody("aliased answer");
+  };
+  const app = await createApp({
+    env: envWith({}),
+    fileValues: {},
+    model: "local8b",
+    onLog: () => {},
+    fetchFn,
+  });
+  const answer = await app.ask("q");
+  assertEquals(answer, "aliased answer");
 });
 
 Deno.test("app: cloud order follows NOA_CLOUD with only configured providers", async () => {

@@ -118,7 +118,8 @@ const root = defineCommand({
   options: {
     model: {
       type: "string",
-      description: "force a tier: local3b | local8b | local14b | mistral",
+      description:
+        "force a tier: local1 | local2 | local3 | mistral | claude",
     },
     allowTools: {
       type: "string",

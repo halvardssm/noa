@@ -9,11 +9,13 @@ Most AI usage is burned on trivial questions sent to expensive frontier models. 
 The cascade:
 
 ```
-Tier 0  Ministral 3 3B    (always loaded, ~3GB)  → answers easy things, classifies everything else
-Tier 1  Ministral 3 8B    (loaded on demand)     → moderate tasks
-Tier 2  Ministral 3 14B   (loaded on demand)     → demanding but self-contained tasks
-Tier 3  Claude / Mistral  (cloud APIs)           → heavy reasoning, code generation, frontier tasks
+Tier 0  local1  (default: Ministral 3 3B, always loaded, ~3GB) → answers easy things, classifies everything else
+Tier 1  local2  (default: Ministral 3 8B, loaded on demand)    → moderate tasks
+Tier 2  local3  (default: Ministral 3 14B, loaded on demand)   → demanding but self-contained tasks
+Tier 3  cloud   (Mistral / Claude APIs)                       → heavy reasoning, code generation, frontier tasks
 ```
+
+The tiers are semantic (difficulty); the model behind each is the user's choice — `NOA_MODEL_LOCAL1/2/3` (default the ministral-3 family, `none` disables the tier and the cascade skips it). The judge assigns the tier; escalation only walks configured tiers.
 
 Flow of every request:
 
@@ -73,7 +75,7 @@ The package never writes inside its own install/repo directory. `deno install`, 
 
 - **Runtime:** Deno (TypeScript), zero npm dependencies beyond JSR
 - **CLI:** `defineCommand`/`runCommand`/`UsageError` from `@stdx/cli`; `promptSecret` from `@std/cli/prompt-secret`; `parse` from `@std/dotenv`
-- **Local inference:** Ollama (0.13.1+), models `ministral-3:3b` / `:8b` / `:14b` (hyphenated tag). noa passes `num_ctx 8192` and `keep_alive 5m` per request, which achieves the memory cap without pinned `*-8k` Modelfile variants — no Modelfiles are needed
+- **Local inference:** Ollama (0.13.1+); tier models are user-defined via `NOA_MODEL_LOCAL1/2/3` (defaults: `ministral-3:3b` / `:8b` / `:14b`, hyphenated tag; `none` disables a tier). noa passes `num_ctx 8192` and `keep_alive 5m` per request, which achieves the memory cap without pinned `*-8k` Modelfile variants — no Modelfiles are needed
 - **Cloud:** pluggable `CloudProvider` interface — Mistral Chat Completions and Anthropic Messages API ship, provider order configured by `NOA_CLOUD` (default `mistral,claude`), models overridable via `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL`; keys from `~/.config/noa/.env`. Adding another provider is a one-file job.
 - **Publishing:** JSR package `@halvardm/noa`, entry `src/main.ts`
 
@@ -87,7 +89,8 @@ noa config get <KEY>            print a setting (secrets are masked unless --sho
 noa config list                 list all settings (values masked)
 noa config unset <KEY>          remove a setting
 noa <question>                  ask anything — routes automatically
-noa --model <tier> <question>   force: local3b | local8b | local14b | claude | mistral
+noa --model <tier> <question>   force: local1 | local2 | local3 | mistral | claude
+                                 (local3b/local8b/local14b still work as aliases)
 noa --allow-tools <cmd,...>     set the tool allowlist for this invocation (highest precedence;
                                  example: --allow-tools ls,cat,head,tail,wc,grep,find,jq,curl;
                                  persist via noa config set NOA_TOOLS)
@@ -117,8 +120,23 @@ Conventions: routing decisions/logs go to **stderr**; the answer (and only the a
 - Anthropic provider; weighted, configurable provider order (`NOA_CLOUD`)
 - `noa setup` (interactive, HTTP-API based; noa never spawns anything)
 - Compiled binary with strict permission flags baked from the environment at compile time (`scripts/compile.ts` maps `NOA_TOOLS` → `--allow-run`, `NOA_ALLOW_PATHS` → `--allow-read`/`--allow-write`); unset `NOA_TOOLS` compiles a binary that cannot spawn anything
+- User-defined local models: `NOA_MODEL_LOCAL1/2/3` map the semantic tiers to any Ollama model; `none` disables a tier; no local models at all routes straight to cloud
 
 **Status:** implemented and tested; publishing to JSR/npm deliberately not done yet. The security rules above are the standing spec for both milestones.
+
+## Settings reference
+
+All settings live in `~/.config/noa/.env` (override: `NOA_HOME`), written via `noa config set`; env beats the config file, and CLI flags beat both.
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `NOA_MODEL_LOCAL1` / `_LOCAL2` / `_LOCAL3` | Ollama model behind each local tier (`none` disables the tier) | `ministral-3:3b` / `:8b` / `:14b` |
+| `NOA_TOOLS` | Tool allowlist (comma-separated) | none (no tools callable) |
+| `NOA_ALLOW_PATHS` | Allowed paths (comma-separated) | current directory |
+| `NOA_CLOUD` | Cloud provider order | `mistral,claude` |
+| `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL` | Cloud model overrides | `mistral-large-latest` / `claude-sonnet-4-5` |
+| `MISTRAL_API_KEY` / `ANTHROPIC_API_KEY` | Cloud API keys (masked in output) | unset |
+| `NOA_HOME` | Config directory | `~/.config/noa` |
 
 ## Success requirements
 

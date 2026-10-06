@@ -6,17 +6,48 @@ import {
 } from "./config.ts";
 import { ollamaChat } from "./ollama.ts";
 import { anthropicProvider, mistralProvider } from "./cloud.ts";
+import { LOCAL_TIERS, type Tier } from "./judge.ts";
 import { createGate, type Gate } from "./tools.ts";
 import { cascade, type CascadeDeps, type ChatFn } from "./router.ts";
 import type { FetchFn } from "./http.ts";
 import type { ChatMessage, ToolSpec } from "./ollama.ts";
 
-/** The Ollama model behind each local tier. */
-export const TIER_MODELS: Readonly<Record<string, string>> = {
-  local3b: "ministral-3:3b",
-  local8b: "ministral-3:8b",
-  local14b: "ministral-3:14b",
+/** The local tiers and their user-configured models. */
+export interface LocalTiers {
+  /** Configured tiers in escalation order (disabled tiers are absent). */
+  readonly order: readonly Tier[];
+  /** Tier -> Ollama model name. */
+  readonly models: Readonly<Record<string, string>>;
+}
+
+/** The built-in default model per tier. */
+const DEFAULT_TIER_MODELS: Readonly<Record<string, string>> = {
+  local1: "ministral-3:3b",
+  local2: "ministral-3:8b",
+  local3: "ministral-3:14b",
 };
+
+/**
+ * Resolves the local tiers from `NOA_MODEL_LOCAL1/2/3` (env wins over the
+ * config file; `none` disables the tier). Defaults to the ministral-3
+ * family, so a fresh install behaves like the original spec.
+ */
+export function resolveLocalTiers(
+  env: { get(name: string): string | undefined },
+  fileValues: Record<string, string>,
+): LocalTiers {
+  const models: Record<string, string> = {};
+  const order: Tier[] = [];
+  for (const tier of LOCAL_TIERS) {
+    const setting = `NOA_MODEL_${tier.toUpperCase()}`;
+    const raw = env.get(setting) ?? fileValues[setting] ??
+      DEFAULT_TIER_MODELS[tier];
+    if (raw === "" || raw === "none") continue;
+    models[tier] = raw;
+    order.push(tier);
+  }
+  return { order, models };
+}
 
 /** Options for {@linkcode createApp}. */
 export interface AppOptions {
@@ -99,18 +130,34 @@ export async function createApp(options: AppOptions): Promise<App> {
     approveRm: options.approveRm,
   });
 
+  const localTiers = resolveLocalTiers(options.env, options.fileValues);
+  const firstModel = localTiers.order.length > 0
+    ? localTiers.models[localTiers.order[0]]
+    : undefined;
+
   const chatFor = (purpose: string): ChatFn =>
     (messages: readonly ChatMessage[], chatOptions?: {
       json?: boolean;
       tools?: readonly ToolSpec[];
-    }) =>
-      ollamaChat({
-        model: TIER_MODELS[purpose] ?? TIER_MODELS.local3b,
+    }) => {
+      // `judge` and `verify` run on the smallest configured model; tier
+      // purposes resolve to that tier's user-configured model.
+      const model = purpose === "judge" || purpose === "verify"
+        ? firstModel
+        : localTiers.models[purpose];
+      if (model === undefined) {
+        throw new Error(
+          `no model configured for "${purpose}" — set NOA_MODEL_LOCAL1`,
+        );
+      }
+      return ollamaChat({
+        model,
         messages,
         json: chatOptions?.json,
         tools: chatOptions?.tools,
         fetchFn: options.fetchFn,
       });
+    };
 
   const apiKey = (name: string): string =>
     options.env.get(name) ?? options.fileValues[name] ?? "";
@@ -146,6 +193,7 @@ export async function createApp(options: AppOptions): Promise<App> {
 
   const deps: CascadeDeps = {
     chatFor,
+    localTiers: localTiers.order,
     gate,
     clouds,
     forcedTier: forcedTierOf(options.model, options.onLog),
@@ -167,12 +215,19 @@ function forcedTierOf(
   onLog: (message: string) => void,
 ): CascadeDeps["forcedTier"] {
   if (model === undefined) return undefined;
-  if (
-    model === "local3b" || model === "local8b" || model === "local14b" ||
-    model === "mistral" || model === "claude"
-  ) {
-    return model;
-  }
+  // Old, model-size-derived names still work as aliases.
+  const aliases: Record<string, CascadeDeps["forcedTier"]> = {
+    local1: "local1",
+    local2: "local2",
+    local3: "local3",
+    local3b: "local1",
+    local8b: "local2",
+    local14b: "local3",
+    mistral: "mistral",
+    claude: "claude",
+  };
+  const tier = aliases[model];
+  if (tier !== undefined) return tier;
   onLog(`model "${model}" is not supported yet — routing to cloud instead`);
   return "mistral";
 }

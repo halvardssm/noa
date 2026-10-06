@@ -1,12 +1,13 @@
 import type { ChatFn } from "./router.ts";
 
 /** The tiers a request can be routed to. */
-export type Tier = "local3b" | "local8b" | "local14b" | "cloud";
+export type Tier = "local1" | "local2" | "local3" | "cloud";
 
-const TIERS: readonly Tier[] = ["local3b", "local8b", "local14b", "cloud"];
+/** The local tiers in escalation order. */
+export const LOCAL_TIERS: readonly Tier[] = ["local1", "local2", "local3"];
 
 export function isTier(value: string): value is Tier {
-  return (TIERS as readonly string[]).includes(value);
+  return (LOCAL_TIERS as readonly string[]).includes(value) || value === "cloud";
 }
 
 /** The judge's routing decision. */
@@ -19,14 +20,14 @@ export interface Judgment {
 
 const JUDGE_SYSTEM = `You are the router of a local AI CLI. Classify the user's request and rewrite it.
 
-Tiers:
-- local3b: trivial questions, chat, simple lookups, basic arithmetic, formatting.
-- local8b: moderate tasks: summarizing, explaining, simple code questions.
-- local14b: demanding but self-contained tasks: multi-step reasoning, code generation and review.
+Tiers (difficulty; each maps to a model the user configured):
+- local1: trivial questions, chat, simple lookups, basic arithmetic, formatting.
+- local2: moderate tasks: summarizing, explaining, simple code questions.
+- local3: demanding but self-contained tasks: multi-step reasoning, code generation and review.
 - cloud: heavy reasoning, long or complex code generation, frontier tasks, anything needing broad world knowledge.
 
 Respond with ONLY a JSON object:
-{"tier": "local3b" | "local8b" | "local14b" | "cloud", "reason": "one short sentence", "improved_prompt": "the user's intent, rewritten to be clearer and more complete"}
+{"tier": "local1" | "local2" | "local3" | "cloud", "reason": "one short sentence", "improved_prompt": "the user's intent, rewritten to be clearer and more complete"}
 
 The improved_prompt must preserve the user's intent exactly; never add tasks they did not ask for. If the user asks for an ACTION — to run a command, read a file, list a directory, or fetch a URL — the improved_prompt must request that exact action to be performed, not a description or explanation of it. Preserve exact text the user wants repeated or echoed (e.g. "reply with exactly ...") verbatim.`;
 
@@ -70,7 +71,7 @@ export async function judge(
 
 function fallback(question: string): Judgment {
   return {
-    tier: "local3b",
+    tier: "local1",
     reason: "fallback: judge output was unparseable",
     improvedPrompt: question,
   };
@@ -78,6 +79,10 @@ function fallback(question: string): Judgment {
 
 function normalizeTier(tier: string): Tier | null {
   if (tier === "mistral" || tier === "claude") return "cloud";
+  // Old, model-size-derived names are still accepted as tier aliases.
+  if (tier === "local3b") return "local1";
+  if (tier === "local8b") return "local2";
+  if (tier === "local14b") return "local3";
   return isTier(tier) ? tier : null;
 }
 
