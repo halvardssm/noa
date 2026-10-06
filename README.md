@@ -15,7 +15,7 @@ Tier 2  local3  (default: Ministral 3 14B, loaded on demand)   → demanding but
 Tier 3  cloud   (Mistral / Claude APIs)                       → heavy reasoning, code generation, frontier tasks
 ```
 
-The tiers are semantic (difficulty); the model behind each is the user's choice — `NOA_MODEL_LOCAL1/2/3` (default the ministral-3 family, `none` disables the tier and the cascade skips it). The judge assigns the tier; escalation only walks configured tiers.
+The tiers are semantic (difficulty), and there can be any number of them: the ordered `models` list in `config.json` defines both the models and the escalation order (position 1 = `local1`, and so on), each with an optional description the judge reads to route. The judge assigns the tier; escalation only walks configured tiers and ends at cloud. An explicit empty list is a deliberate cloud-only setup.
 
 Flow of every request:
 
@@ -38,7 +38,7 @@ noa implements no tools of its own. The agent's only capability is invoking **al
 1. **Allowed paths (argument-level screening):** any command argument that names an existing filesystem path must resolve — after symlink and `..` resolution — inside the **allowed paths**, or the invocation is rejected. Allowed paths resolve by **precedence — the most specific scope wins, and each level fully replaces the one below:**
    - CLI flag `--allow-paths <p,...>` (this invocation)
    - env var `NOA_ALLOW_PATHS` (this shell/session — wins over the config file because `@std/dotenv`'s `load()` never overrides existing process env)
-   - config file `~/.config/noa/.env` (global; written via `noa config set NOA_ALLOW_PATHS <p,...>`)
+   - config file `~/.config/noa/config.json` (global; written via `noa config set NOA_ALLOW_PATHS <p,...>`)
    - built-in default: **the current directory** — the narrowest scope that is still useful. noa warns on stderr when the current directory is not `$HOME` or one of its folders and nothing was configured explicitly; a flag, env var, or config entry is a deliberate choice and never warns.
 
    A flag may widen or narrow freely: the same user typed it, so there is nothing to protect against — which is why the earlier `--force-paths` escape hatch is dropped as redundant. `noa config get` prints the effective list so the live configuration is always visible.
@@ -56,14 +56,14 @@ noa implements no tools of its own. The agent's only capability is invoking **al
 5. **Deno permissions mirror the gate:** compiled/installed binaries use `--allow-net --allow-env=NOA_HOME,NOA_TOOLS,NOA_ALLOW_PATHS,HOME,MISTRAL_API_KEY,OLLAMA_HOST --allow-read=$HOME/dev,$HOME/.config/noa --allow-write=$HOME/dev,$HOME/.config/noa --allow-run=<the allowlist from NOA_TOOLS at compile time, none if unset>` so the runtime enforces the default boundary even if the code checks were removed.
 6. **Subprocess reality:** Deno permissions are enforced on the Deno process only — never on child processes. `--allow-run` gates which executables may be spawned (arguments are not checked); once spawned, a child runs with the user's full privileges, outside the sandbox. Therefore **noa never spawns Ollama**: Ollama runs as an independent user daemon and noa talks to it over `localhost:11434` (covered by `--allow-net`). The model executes nothing — it can only produce a request that passes through the gate inside noa's own sandboxed process.
 7. **Runtime vs. code enforcement for custom settings:** compiled binaries bake their permission flags in at compile time. A configured allowlist and configured paths are enforced by the runtime; user-extended `--allow-tools` lists and `--allow-paths` sets are enforced by code checks in the gate, since the compiled binary's flags cannot be widened at runtime. Users who want the runtime itself to enforce custom settings run from source with matching flags (`deno run --allow-run=<your,tools> --allow-read=<your,paths> ... src/main.ts`) or recompile (`deno task compile`, which bakes the current `NOA_TOOLS`/`NOA_ALLOW_PATHS` into the Deno flags). The `deno task noa` dev task carries the suggested example list as its `--allow-run` ceiling and the current directory as its read/write scope — the gate still enforces the actual configuration beneath it. A custom allowlist is only as strong as its weakest entry — adding `curl` unscreened or `node` effectively voids the GET-only posture and any path discipline.
-8. **Config writes are additive and secret-safe:** `noa config set` is the supported way to write settings — API keys, `NOA_TOOLS`, `NOA_ALLOW_PATHS`, model overrides — to `~/.config/noa/.env`. It creates the file `chmod 600` if missing, updates only the named key, and never rewrites or reorders unrelated entries. Secret-looking values (`*_KEY`, `*_TOKEN`, `*_SECRET`) are masked in `config get`/`config list` output unless `--show` is passed. Widening settings (`NOA_TOOLS`, `NOA_ALLOW_PATHS`) are writable via `config set` — this is the user acting deliberately at the keyboard, which is the same trust level as editing the file by hand; the model still cannot touch them, because it only ever requests allowlisted command runs, and `noa`/`config` are not allowlisted commands.
+8. **Config writes are additive and secret-safe:** `noa config set` is the supported way to write string settings — API keys, `NOA_TOOLS`, `NOA_ALLOW_PATHS`, model overrides — to `~/.config/noa/config.json` (the `models` list is edited by hand or via `noa setup`). It creates the file `chmod 600` if missing, updates only the named key, and never rewrites or reorders unrelated entries. Secret-looking values (`*_KEY`, `*_TOKEN`, `*_SECRET`) are masked in `config get`/`config list` output unless `--show` is passed. Widening settings (`NOA_TOOLS`, `NOA_ALLOW_PATHS`) are writable via `config set` — this is the user acting deliberately at the keyboard, which is the same trust level as editing the file by hand; the model still cannot touch them, because it only ever requests allowlisted command runs, and `noa`/`config` are not allowlisted commands.
 
 ## Where things live
 
 
 | What                                          | Where                                   |
 | --------------------------------------------- | --------------------------------------- |
-| noa config (`.env` with API keys)              | `~/.config/noa/` (override: `NOA_HOME`) |
+| noa config (`config.json`, zod-validated; legacy `.env` migrated on first load) | `~/.config/noa/` (override: `NOA_HOME`) |
 | Models                                        | `~/.ollama/` (Ollama's own storage)     |
 | Installed binary                              | `~/.deno/bin/`                          |
 | Allowed paths                                 | current directory (configure: `NOA_ALLOW_PATHS`, comma-separated) |
@@ -73,17 +73,17 @@ The package never writes inside its own install/repo directory. `deno install`, 
 
 ## Stack
 
-- **Runtime:** Deno (TypeScript), zero npm dependencies beyond JSR
+- **Runtime:** Deno (TypeScript), JSR dependencies only (`@stdx/cli`, `@std/cli`, `@std/dotenv`, `@std/assert`, and `zod` via `jsr:@zod/zod` for config validation)
 - **CLI:** `defineCommand`/`runCommand`/`UsageError` from `@stdx/cli`; `promptSecret` from `@std/cli/prompt-secret`; `parse` from `@std/dotenv`
-- **Local inference:** Ollama (0.13.1+); tier models are user-defined via `NOA_MODEL_LOCAL1/2/3` (defaults: `ministral-3:3b` / `:8b` / `:14b`, hyphenated tag; `none` disables a tier). noa passes `num_ctx 8192` and `keep_alive 5m` per request, which achieves the memory cap without pinned `*-8k` Modelfile variants — no Modelfiles are needed
-- **Cloud:** pluggable `CloudProvider` interface — Mistral Chat Completions and Anthropic Messages API ship, provider order configured by `NOA_CLOUD` (default `mistral,claude`), models overridable via `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL`; keys from `~/.config/noa/.env`. Adding another provider is a one-file job.
+- **Local inference:** Ollama (0.13.1+); the model cascade is user-defined in `config.json` as an ordered `models` list (any count, smallest to largest, each with an optional description the judge reads). Absent `models` falls back to `ministral-3:3b` / `:8b` / `:14b`. noa passes `num_ctx 8192` and `keep_alive 5m` per request, which achieves the memory cap without Modelfiles
+- **Cloud:** pluggable `CloudProvider` interface — Mistral Chat Completions and Anthropic Messages API ship, provider order configured by `NOA_CLOUD` (default `mistral,claude`), models overridable via `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL`; keys from `~/.config/noa/config.json` (env vars also work). Adding another provider is a one-file job.
 - **Publishing:** JSR package `@halvardm/noa`, entry `src/main.ts`
 
 ## CLI surface
 
 ```
-noa setup                       interactive first-time setup (ollama, memory caps, models, .env)
-noa config set <KEY> [VALUE]    write a setting to ~/.config/noa/.env (prompts with hidden
+noa setup                       interactive first-time setup (models: default or custom, memory cap, keys)
+noa config set <KEY> [VALUE]    write a setting to ~/.config/noa/config.json (prompts with hidden
                                  input if VALUE omitted); e.g. noa config set MISTRAL_API_KEY
 noa config get <KEY>            print a setting (secrets are masked unless --show)
 noa config list                 list all settings (values masked)
@@ -102,7 +102,7 @@ noa --tools                     list permitted tools
 
 Conventions: routing decisions/logs go to **stderr**; the answer (and only the answer) to **stdout**, so output is pipeable (`noa explain this | pbcopy`).
 
-`noa setup` performs every step behind explicit yes/no prompts: daemon check (with install/start instructions if Ollama is down — noa never spawns anything, rule 6), per-model pull confirms over the Ollama HTTP API (`3b` is the suggested default; `8b`/`14b` optional), persisting `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile (behind a prompt; refused cleanly when the compiled binary's flags exclude the profile), and prompting for API keys only when `.env` doesn't exist. Setup refuses non-interactive stdin with instructions — it is a trusted interactive action, and the distributed binary may exclude steps via its permission flags.
+`noa setup` first asks for **default or custom** models. Default runs a **systems check** (total RAM via `Deno.systemMemoryInfo`) and downloads only what the system can handle — 3b from 6GB, 8b from 12GB, 14b from 24GB — printing a note of what it downloads and what it skips (needs more RAM); the chosen subset is written to `config.json` so the cascade matches what is installed. Custom asks for an ordered, comma-separated model list (smallest to largest), then a one-line description of each model individually (the judge reads these descriptions to route), then pulls them. Everything runs behind explicit prompts, over the Ollama HTTP API only — noa never spawns anything (rule 6). Setup also persists `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile behind a prompt, and prompts for API keys only when `config.json` didn't exist. Setup refuses non-interactive stdin with instructions; the compiled binary may exclude steps via its permission flags.
 
 ## Implementation milestones
 
@@ -110,7 +110,7 @@ Conventions: routing decisions/logs go to **stderr**; the answer (and only the a
 
 - Judge (3B) → route → answer → verify → cascade, end to end
 - Command execution gate: allowlist and allowed paths resolved via the precedence chain (`--allow-tools`/`--allow-paths` > `NOA_TOOLS`/`NOA_ALLOW_PATHS` env > config file > no tools / current directory), argument path screening, curl method screening, stderr invocation log
-- `noa config set|get|list|unset` — settings live in `~/.config/noa/.env`, so no hand-editing is required
+- `noa config set|get|list|unset` — settings live in `~/.config/noa/config.json`, so no hand-editing is required
 - Cloud: Mistral only, via the `CloudProvider` interface
 - Config via `noa config`; no `noa setup` yet
 
@@ -120,17 +120,17 @@ Conventions: routing decisions/logs go to **stderr**; the answer (and only the a
 - Anthropic provider; weighted, configurable provider order (`NOA_CLOUD`)
 - `noa setup` (interactive, HTTP-API based; noa never spawns anything)
 - Compiled binary with strict permission flags baked from the environment at compile time (`scripts/compile.ts` maps `NOA_TOOLS` → `--allow-run`, `NOA_ALLOW_PATHS` → `--allow-read`/`--allow-write`); unset `NOA_TOOLS` compiles a binary that cannot spawn anything
-- User-defined local models: `NOA_MODEL_LOCAL1/2/3` map the semantic tiers to any Ollama model; `none` disables a tier; no local models at all routes straight to cloud
+- User-defined local models: the ordered `models` array in `config.json` (arbitrary count, per-model descriptions for the judge); setup offers default (with systems check) or custom
 
 **Status:** implemented and tested; publishing to JSR/npm deliberately not done yet. The security rules above are the standing spec for both milestones.
 
 ## Settings reference
 
-All settings live in `~/.config/noa/.env` (override: `NOA_HOME`), written via `noa config set`; env beats the config file, and CLI flags beat both.
+All non-secret settings live in `~/.config/noa/config.json` (JSON, validated with zod; flat string settings plus the `models` array), written via `noa config set` or by hand; env vars beat the file, and CLI flags beat both. A legacy `.env` file is migrated verbatim on first load.
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
-| `NOA_MODEL_LOCAL1` / `_LOCAL2` / `_LOCAL3` | Ollama model behind each local tier (`none` disables the tier) | `ministral-3:3b` / `:8b` / `:14b` |
+| `models` | ordered array of `{model, description?}` — the cascade, any count; explicit `[]` is cloud-only | `[{ministral-3:3b ...}, {ministral-3:8b ...}, {ministral-3:14b ...}]` with the standard descriptions |
 | `NOA_TOOLS` | Tool allowlist (comma-separated) | none (no tools callable) |
 | `NOA_ALLOW_PATHS` | Allowed paths (comma-separated) | current directory |
 | `NOA_CLOUD` | Cloud provider order | `mistral,claude` |
@@ -156,7 +156,7 @@ The repo is done when all of these hold:
 - [ ] A moderate code question routes to 8B; a demanding one routes to 14B
 - [ ] A genuinely hard task cascades upward and, if all local tiers fail verification, reaches Claude or Mistral with the improved (rewritten) prompt — visible in stderr
 - [ ] `--model claude` forces cloud and works
-- [x] With no API keys in `.env`, hard tasks fail gracefully with a clear message (never a stack trace about missing keys mid-cascade)
+- [x] With no API keys configured, hard tasks fail gracefully with a clear message (never a stack trace about missing keys mid-cascade)
 
 **Memory**
 
@@ -166,7 +166,7 @@ The repo is done when all of these hold:
 **Security — these MUST all fail safely (test each):**
 
 - [x] `noa read the file ~/.ssh/id_rsa` → denied, outside the allowed paths, even via traversal or symlinks (proof in gate tests)
-- [x] Precedence is observable end to end: with `NOA_ALLOW_PATHS=~/dev,~/work` in `.env`, shell `NOA_ALLOW_PATHS=~/work`, and `--allow-paths ~/work/src`, the flag wins; drop the flag and the shell env wins over the config file; drop both and the config file wins over the default. Same chain for `NOA_TOOLS`/`--allow-tools`
+- [x] Precedence is observable end to end: with `NOA_ALLOW_PATHS=~/dev,~/work` in `config.json`, shell `NOA_ALLOW_PATHS=~/work`, and `--allow-paths ~/work/src`, the flag wins; drop the flag and the shell env wins over the config file; drop both and the config file wins over the default. Same chain for `NOA_TOOLS`/`--allow-tools`
 - [x] A prompt asking to POST/PUT data to a URL → rejected: method/body/upload arguments are screened out of `curl` invocations
 - [x] `rm -rf <outside>` → approval prompt; typing `y` does not approve; approval can never override path screening (gate tests)
 - [x] `rm notes.txt` → approval prompt; exact retype approves; only files inside the allowed paths can be affected (gate tests)
@@ -176,8 +176,8 @@ The repo is done when all of these hold:
 
 **Hygiene**
 
-- [x] `~/.config/noa/.env` is `chmod 600`, git-ignored, and never overwritten by setup
-- [x] `noa config set MISTRAL_API_KEY` writes the key (chmod 600 on file creation) and preserves unrelated entries; `config set NOA_TOOLS git,rg` and `config set NOA_ALLOW_PATHS ~/dev,~/work` persist correctly and are active on the next run
+- [x] `~/.config/noa/config.json` is `chmod 600`, git-ignored, and never overwritten by setup (a legacy `.env` is migrated once, verbatim, and left untouched)
+- [x] `noa config set MISTRAL_API_KEY` writes the key (chmod 600 on file creation) and preserves unrelated entries; `config set NOA_TOOLS git,rg` and `config set NOA_ALLOW_PATHS ~/dev,~/work` persist correctly and are active on the next run; `config set models` is refused with a hint to edit the file or rerun setup
 - [x] Nothing is written into the package/repo directory at runtime
 - [ ] `git clone` + setup on a second machine reaches a working `noa what is 2+2` without editing any file by hand
 
