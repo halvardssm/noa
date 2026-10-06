@@ -247,6 +247,22 @@ Deno.test("gate: rejects curl invocations with body arguments", async () => {
   }
 });
 
+Deno.test("gate: expands ~ in arguments for the child (no shell)", async () => {
+  const home = await Deno.makeTempDir({ prefix: "noa-home-" });
+  try {
+    await Deno.writeTextFile(`${home}/note.txt`, "tilde\n");
+    const gate = await createGate({
+      allowTools: ["cat"],
+      allowPaths: [home],
+      homeDir: home,
+    });
+    const result = await gate.run("cat", ["~/note.txt"]);
+    assertEquals(result.stdout, "tilde\n");
+  } finally {
+    await Deno.remove(home, { recursive: true });
+  }
+});
+
 Deno.test("expandTilde: expands ~ and ~/x with the given home", () => {
   assertEquals(expandTilde("~", "/home/u"), "/home/u");
   assertEquals(expandTilde("~/dev/x", "/home/u"), "/home/u/dev/x");

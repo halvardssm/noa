@@ -196,8 +196,10 @@ export async function createGate(settings: GateSettings): Promise<Gate> {
       }
       await screenArgs(command, args);
       log(`run: ${command} ${args.join(" ")}`);
+      // There is no shell: expand `~` ourselves, exactly as screened.
+      const childArgs = args.map((a) => expandTilde(a, home));
       const proc = new Deno.Command(command, {
-        args: [...args],
+        args: [...childArgs],
         cwd: settings.cwd,
         stdout: "piped",
         stderr: "piped",

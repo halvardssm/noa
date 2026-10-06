@@ -53,6 +53,8 @@ interface OllamaChatOptions {
   readonly tools?: readonly ToolSpec[];
   /** Ask Ollama to constrain the output to JSON. */
   readonly json?: boolean;
+  /** Context window; defaults to 8192 to cap memory (spec: pinned 8k). */
+  readonly numCtx?: number;
   readonly fetchFn?: FetchFn;
   readonly baseUrl?: string;
 }
@@ -91,6 +93,7 @@ export async function ollamaChat(
     body.tools = options.tools;
   }
   if (options.json) body.format = "json";
+  body.options = { num_ctx: options.numCtx ?? 8192 };
 
   let response;
   try {

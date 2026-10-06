@@ -55,7 +55,7 @@ export interface CascadeDeps {
   readonly maxToolRounds?: number;
 }
 
-const AGENT_SYSTEM = `You are a local coding assistant. You may run allowlisted local commands via the run_command tool when inspecting files or fetching URLs helps; the tool enforces security rules and its rejections are final. When you know the answer, answer directly in plain text.`;
+const AGENT_SYSTEM = `You are a local coding assistant with a run_command tool that executes allowlisted local commands (no shell). When the user asks to run, read, list, or fetch something, use the tool instead of describing hypothetical output; the tool enforces the security rules and its rejections are final — report them honestly rather than guessing. When you know the answer, answer directly in plain text.`;
 
 /**
  * Routes a question through the cascade:

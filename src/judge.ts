@@ -28,7 +28,7 @@ Tiers:
 Respond with ONLY a JSON object:
 {"tier": "local3b" | "local8b" | "local14b" | "cloud", "reason": "one short sentence", "improved_prompt": "the user's intent, rewritten to be clearer and more complete"}
 
-The improved_prompt must preserve the user's intent exactly; never add tasks they did not ask for.`;
+The improved_prompt must preserve the user's intent exactly; never add tasks they did not ask for. If the user asks for an ACTION — to run a command, read a file, list a directory, or fetch a URL — the improved_prompt must request that exact action to be performed, not a description or explanation of it. Preserve exact text the user wants repeated or echoed (e.g. "reply with exactly ...") verbatim.`;
 
 /** Options for {@linkcode judge}. */
 export interface JudgeOptions {
