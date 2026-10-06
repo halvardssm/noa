@@ -68,6 +68,14 @@ export async function cascade(
 ): Promise<string> {
   const log = deps.onLog ?? (() => {});
 
+  // A forced cloud tier must not require Ollama at all; fail fast with the
+  // config remedy before anything local runs.
+  if (deps.forcedTier === "mistral" && deps.cloud === undefined) {
+    throw new Error(
+      "no cloud provider configured — run `noa config set MISTRAL_API_KEY`",
+    );
+  }
+
   const judgment: Judgment = await judge(question, {
     chat: deps.chatFor("judge"),
   });

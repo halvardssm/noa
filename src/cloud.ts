@@ -18,14 +18,18 @@ export class ProviderError extends Error {
   }
 }
 
-/** Settings for the Mistral Chat Completions provider. */
-export interface MistralOptions {
-  /** The (improved) prompt to send. */
-  readonly prompt: string;
+/** Configuration of the Mistral provider. */
+export interface MistralConfig {
   readonly apiKey: string;
   /** Model name; defaults to `mistral-large-latest`. */
   readonly model?: string;
   readonly fetchFn?: FetchFn;
+}
+
+/** Settings for a single Mistral Chat Completions call. */
+export interface MistralOptions extends MistralConfig {
+  /** The (improved) prompt to send. */
+  readonly prompt: string;
 }
 
 const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
@@ -76,9 +80,9 @@ export async function mistralChat(options: MistralOptions): Promise<string> {
 }
 
 /** A `CloudProvider` backed by Mistral Chat Completions. */
-export function mistralProvider(options: MistralOptions): CloudProvider {
+export function mistralProvider(config: MistralConfig): CloudProvider {
   return {
     name: "mistral",
-    chat: (prompt) => mistralChat({ ...options, prompt }),
+    chat: (prompt) => mistralChat({ ...config, prompt }),
   };
 }

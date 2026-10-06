@@ -39,6 +39,14 @@ export interface ChatAnswer {
 /** Where the Ollama daemon listens. */
 export const OLLAMA_BASE_URL = "http://localhost:11434";
 
+/** Resolves the daemon base URL: `$OLLAMA_HOST` or the default. */
+export function ollamaBaseUrl(): string {
+  const host = Deno.env.get("OLLAMA_HOST");
+  if (host === undefined || host === "") return OLLAMA_BASE_URL;
+  const stripped = host.replace(/\/$/, "");
+  return /^https?:\/\//.test(stripped) ? stripped : `http://${stripped}`;
+}
+
 interface OllamaChatOptions {
   readonly model: string;
   readonly messages: readonly ChatMessage[];
@@ -73,7 +81,7 @@ export async function ollamaChat(
   options: OllamaChatOptions,
 ): Promise<ChatAnswer> {
   const fetchFn = options.fetchFn ?? fetch;
-  const baseUrl = options.baseUrl ?? OLLAMA_BASE_URL;
+  const baseUrl = options.baseUrl ?? ollamaBaseUrl();
   const body: Record<string, unknown> = {
     model: options.model,
     messages: options.messages.map(toWire),
