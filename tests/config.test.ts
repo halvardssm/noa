@@ -162,10 +162,12 @@ Deno.test("ensureConfig: does nothing when neither file exists", async () => {
   }
 });
 
-Deno.test("resolveModels: falls back to the default cascade", () => {
+Deno.test("resolveModels: absent or invalid models fall back to defaults; empty is cloud-only", () => {
   assertEquals(resolveModels({}), [...DEFAULT_MODELS]);
   assertEquals(resolveModels({ models: "not-a-list" }), [...DEFAULT_MODELS]);
-  assertEquals(resolveModels({ models: [] }), [...DEFAULT_MODELS]);
+  assertEquals(resolveModels({ models: [42] }), [...DEFAULT_MODELS]);
+  // An explicit empty list is a deliberate cloud-only override.
+  assertEquals(resolveModels({ models: [] }), []);
 });
 
 Deno.test("resolveModels: accepts an ordered list of models with descriptions", () => {

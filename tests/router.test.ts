@@ -28,19 +28,61 @@ Deno.test("extractJson: pulls JSON out of fenced or prose output", () => {
   assertEquals(extractJson("no json here"), null);
 });
 
+const JUDGE_TIERS = [
+  { name: "local1", description: "easy things" },
+  { name: "local2", description: "moderate things" },
+  { name: "local3", description: "hard things" },
+];
+
 Deno.test("judge: parses tier, reason, and improved prompt", async () => {
   const chat = chatReturning(
     judgmentJson("local2", "Explain this code in depth with examples"),
   );
-  const j = await judge("explain this code", { chat });
+  const j = await judge("explain this code", { chat, tiers: JUDGE_TIERS });
   assertEquals(j.tier, "local2");
   assertEquals(j.reason, "test");
   assertEquals(j.improvedPrompt, "Explain this code in depth with examples");
 });
 
-Deno.test("judge: unparseable output falls back to the raw question on 3b", async () => {
+Deno.test("judge: the system prompt lists the user's tiers and descriptions", async () => {
+  const seen: string[] = [];
+  const chat: ChatFn = async (messages) => {
+    seen.push(messages[0].content);
+    return { content: judgmentJson("local1", "p"), toolCalls: [] };
+  };
+  await judge("q", {
+    chat,
+    tiers: [
+      { name: "local1", description: "trivia and chat" },
+      { name: "local2", description: "code review" },
+    ],
+  });
+  const prompt = seen[0];
+  assert(prompt.includes("- local1: trivia and chat"));
+  assert(prompt.includes("- local2: code review"));
+  assert(prompt.includes("- cloud:"));
+  assert(prompt.includes('"local1","local2","cloud"'));
+});
+
+Deno.test("judge: legacy tier names map onto positions", async () => {
+  const chat = chatReturning(judgmentJson("local8b", "p"));
+  const j = await judge("q", { chat, tiers: JUDGE_TIERS });
+  assertEquals(j.tier, "local2");
+  const cloudName = chatReturning(judgmentJson("mistral", "p"));
+  assertEquals(
+    (await judge("q", { chat: cloudName, tiers: JUDGE_TIERS })).tier,
+    "cloud",
+  );
+});
+
+Deno.test("judge: unknown tiers fall back, unparseable falls back", async () => {
+  const unknown = chatReturning(judgmentJson("local9", "p"));
+  assertEquals(
+    (await judge("q", { chat: unknown, tiers: JUDGE_TIERS })).tier,
+    "local1",
+  );
   const chat = chatReturning("I cannot do JSON, sorry");
-  const j = await judge("what is 2+2", { chat });
+  const j = await judge("what is 2+2", { chat, tiers: JUDGE_TIERS });
   assertEquals(j.tier, "local1");
   assertEquals(j.improvedPrompt, "what is 2+2");
   assert(j.reason.includes("fallback"));

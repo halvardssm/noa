@@ -1,13 +1,12 @@
 import type { ChatFn } from "./router.ts";
 
-/** The tiers a request can be routed to. */
-export type Tier = "local1" | "local2" | "local3" | "cloud";
+/** A tier name; positional (`local1`..`localN`) or `cloud`. */
+export type Tier = string;
 
-/** The local tiers in escalation order. */
-export const LOCAL_TIERS: readonly Tier[] = ["local1", "local2", "local3"];
-
-export function isTier(value: string): value is Tier {
-  return (LOCAL_TIERS as readonly string[]).includes(value) || value === "cloud";
+/** One local tier as the judge sees it: a name and what its model is for. */
+export interface TierInfo {
+  readonly name: string;
+  readonly description?: string;
 }
 
 /** The judge's routing decision. */
@@ -18,50 +17,69 @@ export interface Judgment {
   readonly improvedPrompt: string;
 }
 
-const JUDGE_SYSTEM = `You are the router of a local AI CLI. Classify the user's request and rewrite it.
+/** The fixed description of the cloud tier. */
+const CLOUD_DESCRIPTION =
+  "heavy reasoning, long or complex code generation, frontier tasks, anything needing broad world knowledge.";
 
-Tiers (difficulty; each maps to a model the user configured):
-- local1: trivial questions, chat, simple lookups, basic arithmetic, formatting.
-- local2: moderate tasks: summarizing, explaining, simple code questions.
-- local3: demanding but self-contained tasks: multi-step reasoning, code generation and review.
-- cloud: heavy reasoning, long or complex code generation, frontier tasks, anything needing broad world knowledge.
+/** Builds the judge system prompt from the user's tier list. */
+export function judgeSystemPrompt(tiers: readonly TierInfo[]): string {
+  const lines = tiers.map((tier, index) =>
+    `- ${tier.name}: ${tier.description ?? `local tier ${index + 1}`}`
+  );
+  lines.push(`- cloud: ${CLOUD_DESCRIPTION}`);
+  const names = JSON.stringify([...tiers.map((tier) => tier.name), "cloud"]);
+  return `You are the router of a local AI CLI. Classify the user's request and rewrite it.
+
+Tiers (in escalation order; each maps to a model the user configured):
+${lines.join("\n")}
 
 Respond with ONLY a JSON object:
-{"tier": "local1" | "local2" | "local3" | "cloud", "reason": "one short sentence", "improved_prompt": "the user's intent, rewritten to be clearer and more complete"}
+{"tier": ${names}, "reason": "one short sentence", "improved_prompt": "the user's intent, rewritten to be clearer and more complete"}
 
 The improved_prompt must preserve the user's intent exactly; never add tasks they did not ask for. If the user asks for an ACTION — to run a command, read a file, list a directory, or fetch a URL — the improved_prompt must request that exact action to be performed, not a description or explanation of it. Preserve exact text the user wants repeated or echoed (e.g. "reply with exactly ...") verbatim.`;
+}
 
 /** Options for {@linkcode judge}. */
 export interface JudgeOptions {
   readonly chat: ChatFn;
+  /** The configured local tiers, in escalation order. */
+  readonly tiers: readonly TierInfo[];
   readonly system?: string;
 }
 
 /**
- * The 3B judges the request: outputs `{tier, reason, improved_prompt}`.
- * On unparseable output it falls back to answering on the 3B with the raw
- * question — the cheapest safe default.
+ * The smallest configured model judges the request: outputs
+ * `{tier, reason, improved_prompt}`. On unparseable output it falls back to
+ * the first tier with the raw question — the cheapest safe default.
  */
 export async function judge(
   question: string,
   options: JudgeOptions,
 ): Promise<Judgment> {
+  const fallbackTier = options.tiers[0]?.name ?? "cloud";
   const answer = await options.chat(
     [
-      { role: "system", content: options.system ?? JUDGE_SYSTEM },
+      {
+        role: "system",
+        content: options.system ?? judgeSystemPrompt(options.tiers),
+      },
       { role: "user", content: question },
     ],
     { json: true },
   );
   const parsed = extractJson(answer.content);
-  if (parsed === null || typeof parsed !== "object") return fallback(question);
+  if (parsed === null || typeof parsed !== "object") {
+    return fallback(question, fallbackTier);
+  }
   const record = parsed as Record<string, unknown>;
-  const tier = typeof record.tier === "string" ? normalizeTier(record.tier) : null;
+  const tier = typeof record.tier === "string"
+    ? normalizeTier(record.tier, options.tiers)
+    : null;
   const improved = typeof record.improved_prompt === "string" &&
       record.improved_prompt.trim() !== ""
     ? record.improved_prompt
     : question;
-  if (tier === null) return fallback(question);
+  if (tier === null) return fallback(question, fallbackTier);
   return {
     tier,
     reason: typeof record.reason === "string" ? record.reason : "",
@@ -69,21 +87,30 @@ export async function judge(
   };
 }
 
-function fallback(question: string): Judgment {
+function fallback(question: string, tier: string): Judgment {
   return {
-    tier: "local1",
+    tier,
     reason: "fallback: judge output was unparseable",
     improvedPrompt: question,
   };
 }
 
-function normalizeTier(tier: string): Tier | null {
+function normalizeTier(
+  tier: string,
+  tiers: readonly TierInfo[],
+): Tier | null {
   if (tier === "mistral" || tier === "claude") return "cloud";
-  // Old, model-size-derived names are still accepted as tier aliases.
-  if (tier === "local3b") return "local1";
-  if (tier === "local8b") return "local2";
-  if (tier === "local14b") return "local3";
-  return isTier(tier) ? tier : null;
+  // Legacy, model-size-derived names map onto the first three positions.
+  const legacy: Record<string, number> = {
+    local3b: 0,
+    local8b: 1,
+    local14b: 2,
+  };
+  const legacyIndex = legacy[tier];
+  if (legacyIndex !== undefined) {
+    return tiers[legacyIndex]?.name ?? null;
+  }
+  return tiers.some((t) => t.name === tier) ? tier : null;
 }
 
 /**

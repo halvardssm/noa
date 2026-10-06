@@ -1,7 +1,7 @@
 import type { ChatAnswer, ChatMessage, ToolSpec } from "./ollama.ts";
 import type { CloudProvider } from "./cloud.ts";
 import type { RunResult } from "./tools.ts";
-import { judge, LOCAL_TIERS, type Judgment, type Tier } from "./judge.ts";
+import { judge, type Judgment, type Tier, type TierInfo } from "./judge.ts";
 import { verify } from "./verify.ts";
 
 /** A chat function bound to a model, with JSON mode and tool support. */
@@ -32,8 +32,11 @@ export const RUN_COMMAND_TOOL: ToolSpec = {
   },
 };
 
-/** A tier forced by `--model`; skips verification and the cascade. */
-export type ForcedTier = "local1" | "local2" | "local3" | "mistral" | "claude";
+/**
+ * A tier forced by `--model`; skips verification and the cascade.
+ * Positional (`local1`..`localN`), a legacy alias, or `mistral`/`claude`.
+ */
+export type ForcedTier = string;
 
 /** Dependencies of the cascade, injected for testing. */
 export interface CascadeDeps {
@@ -41,6 +44,8 @@ export interface CascadeDeps {
   readonly chatFor: (purpose: string) => ChatFn;
   /** The configured local tiers in escalation order (user-defined models). */
   readonly localTiers: readonly Tier[];
+  /** The user's description per tier, fed to the judge prompt. */
+  readonly tierDescriptions?: Readonly<Record<string, string>>;
   /** The execution gate the agent loop runs commands through. */
   readonly gate: {
     run(command: string, args: readonly string[]): Promise<RunResult>;
@@ -86,11 +91,11 @@ export async function cascade(
     );
   }
   const forcedLocal = deps.forcedTier !== undefined && forcedCloud === undefined
-    ? deps.forcedTier as Tier
+    ? deps.forcedTier
     : undefined;
   if (forcedLocal !== undefined && !localTiers.includes(forcedLocal)) {
     throw new Error(
-      `${forcedLocal} is disabled — set NOA_MODEL_${forcedLocal.toUpperCase()} or force another tier`,
+      `${forcedLocal} is not configured — check the models list in config.json or force another tier`,
     );
   }
 
@@ -110,6 +115,10 @@ export async function cascade(
   try {
     judgment = await judge(question, {
       chat: deps.chatFor("judge"),
+      tiers: localTiers.map((name): TierInfo => ({
+        name,
+        description: deps.tierDescriptions?.[name],
+      })),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -175,8 +184,8 @@ export async function cascade(
 
 /**
  * The escalation order from the judge's (or forced) starting tier, walking
- * only the configured local tiers. A judged-but-disabled tier starts at the
- * next configured one; the plan always ends at cloud.
+ * only the configured local tiers. A judged-but-absent tier starts at the
+ * bottom; the plan always ends at cloud.
  */
 export function planTiers(
   judged: Tier,
@@ -186,10 +195,8 @@ export function planTiers(
   if (forced === "mistral" || forced === "claude") return ["cloud"];
   const start = forced ?? judged;
   if (start === "cloud") return ["cloud"];
-  const startIdx = LOCAL_TIERS.indexOf(start);
-  const chain = localTiers.filter((tier) =>
-    LOCAL_TIERS.indexOf(tier) >= startIdx
-  );
+  const startIdx = localTiers.indexOf(start);
+  const chain = startIdx === -1 ? [...localTiers] : localTiers.slice(startIdx);
   chain.push("cloud");
   return chain;
 }

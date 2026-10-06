@@ -183,8 +183,13 @@ Deno.test("app: custom local models are used per tier", async () => {
     return ollamaBody("custom answer");
   };
   const app = await createApp({
-    env: envWith({ NOA_MODEL_LOCAL1: "qwen3:4b", NOA_MODEL_LOCAL2: "llama3.1:8b" }),
-    fileValues: { NOA_MODEL_LOCAL1: "ignored-because-env-wins" },
+    env: envWith({}),
+    fileValues: {
+      models: [
+        { model: "qwen3:4b", description: "chat" },
+        { model: "llama3.1:8b", description: "code" },
+      ],
+    },
     onLog: () => {},
     fetchFn,
   });
@@ -194,7 +199,7 @@ Deno.test("app: custom local models are used per tier", async () => {
   assert(seen.includes("llama3.1:8b"), "the judged tier uses the user's model");
 });
 
-Deno.test("app: a tier set to none is disabled and skipped", async () => {
+Deno.test("app: a single-model cascade works", async () => {
   const fetchFn: FetchFn = async (_url, init) => {
     const body = JSON.parse((init as RequestInit).body as string);
     const user = body.messages?.[body.messages.length - 1]?.content ?? "";
@@ -203,22 +208,22 @@ Deno.test("app: a tier set to none is disabled and skipped", async () => {
     }
     if (body.format === "json") {
       return ollamaBody(
-        JSON.stringify({ tier: "local2", reason: "x", improved_prompt: "p" }),
+        JSON.stringify({ tier: "local1", reason: "x", improved_prompt: "p" }),
       );
     }
-    return ollamaBody("from local3");
+    return ollamaBody("only answer");
   };
   const app = await createApp({
-    env: envWith({ NOA_MODEL_LOCAL2: "none" }),
-    fileValues: {},
+    env: envWith({}),
+    fileValues: { models: [{ model: "qwen3:4b", description: "everything" }] },
     onLog: () => {},
     fetchFn,
   });
-  const answer = await app.ask("moderate question");
-  assertEquals(answer, "from local3");
+  const answer = await app.ask("any question");
+  assertEquals(answer, "only answer");
 });
 
-Deno.test("app: with no local models at all, the raw question goes to cloud", async () => {
+Deno.test("app: with an explicit empty models list, the raw question goes to cloud", async () => {
   const prompts: string[] = [];
   const fetchFn: FetchFn = async (url, init) => {
     if (String(url).includes("mistral.ai")) {
@@ -228,13 +233,8 @@ Deno.test("app: with no local models at all, the raw question goes to cloud", as
     throw new Error("no ollama call expected");
   };
   const app = await createApp({
-    env: envWith({
-      MISTRAL_API_KEY: "sk",
-      NOA_MODEL_LOCAL1: "none",
-      NOA_MODEL_LOCAL2: "none",
-      NOA_MODEL_LOCAL3: "none",
-    }),
-    fileValues: {},
+    env: envWith({ MISTRAL_API_KEY: "sk" }),
+    fileValues: { models: [] },
     onLog: () => {},
     fetchFn,
   });
@@ -243,16 +243,16 @@ Deno.test("app: with no local models at all, the raw question goes to cloud", as
   assertEquals(prompts, ["the raw question"]);
 });
 
-Deno.test("app: forcing a disabled tier names its setting", async () => {
+Deno.test("app: forcing an unconfigured tier names the config", async () => {
   const app = await createApp({
-    env: envWith({ NOA_MODEL_LOCAL2: "none" }),
-    fileValues: {},
+    env: envWith({}),
+    fileValues: { models: [{ model: "qwen3:4b" }] },
     model: "local2",
     onLog: () => {},
   });
   const error = await assertRejects(() => app.ask("q"), Error);
   assert(error.message.includes("local2"));
-  assert(error.message.includes("NOA_MODEL_LOCAL2"));
+  assert(error.message.includes("config.json"));
 });
 
 Deno.test("app: local tier aliases from --model still resolve", async () => {

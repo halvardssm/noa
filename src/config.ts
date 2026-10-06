@@ -249,15 +249,15 @@ export function stringSetting(
 /**
  * Resolves the local model cascade from the config's `models` array:
  * ordered smallest to largest; the position is the escalation tier.
- * Falls back to the built-in defaults when unset or empty.
+ * An absent or invalid `models` key falls back to the built-in defaults;
+ * an explicit empty array is a deliberate cloud-only override.
  */
 export function resolveModels(
   config: Record<string, unknown>,
 ): ModelEntry[] {
+  if (!("models" in config)) return [...DEFAULT_MODELS];
   const result = modelsSchema.safeParse(config["models"]);
-  if (!result.success || result.data.length === 0) {
-    return [...DEFAULT_MODELS];
-  }
+  if (!result.success) return [...DEFAULT_MODELS];
   return result.data.map((entry) => ({
     model: entry.model,
     ...(entry.description !== undefined ? { description: entry.description } : {}),

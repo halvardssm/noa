@@ -2,12 +2,14 @@ import {
   defaultAllowPaths,
   isUnderHome,
   resolveList,
+  resolveModels,
   stringSetting,
   SUGGESTED_TOOLS,
+  type ModelEntry,
 } from "./config.ts";
 import { ollamaChat } from "./ollama.ts";
 import { anthropicProvider, mistralProvider } from "./cloud.ts";
-import { LOCAL_TIERS, type Tier } from "./judge.ts";
+import type { Tier } from "./judge.ts";
 import { createGate, type Gate } from "./tools.ts";
 import { cascade, type CascadeDeps, type ChatFn } from "./router.ts";
 import type { FetchFn } from "./http.ts";
@@ -15,39 +17,29 @@ import type { ChatMessage, ToolSpec } from "./ollama.ts";
 
 /** The local tiers and their user-configured models. */
 export interface LocalTiers {
-  /** Configured tiers in escalation order (disabled tiers are absent). */
+  /** Tier names in escalation order: `local1`..`localN`. */
   readonly order: readonly Tier[];
   /** Tier -> Ollama model name. */
   readonly models: Readonly<Record<string, string>>;
+  /** Tier -> the user's description of what the model is for. */
+  readonly descriptions: Readonly<Record<string, string>>;
 }
 
-/** The built-in default model per tier. */
-const DEFAULT_TIER_MODELS: Readonly<Record<string, string>> = {
-  local1: "ministral-3:3b",
-  local2: "ministral-3:8b",
-  local3: "ministral-3:14b",
-};
-
 /**
- * Resolves the local tiers from `NOA_MODEL_LOCAL1/2/3` (env wins over the
- * config file; `none` disables the tier). Defaults to the ministral-3
- * family, so a fresh install behaves like the original spec.
+ * Maps the user's ordered model list onto positional tiers: position is
+ * the escalation order, the first entry is the always-warm judge/verifier.
  */
 export function resolveLocalTiers(
-  env: { get(name: string): string | undefined },
-  fileValues: Record<string, unknown>,
+  models: readonly ModelEntry[],
 ): LocalTiers {
-  const models: Record<string, string> = {};
-  const order: Tier[] = [];
-  for (const tier of LOCAL_TIERS) {
-    const setting = `NOA_MODEL_${tier.toUpperCase()}`;
-    const raw = env.get(setting) ?? stringSetting(fileValues, setting) ??
-      DEFAULT_TIER_MODELS[tier];
-    if (raw === "" || raw === "none") continue;
-    models[tier] = raw;
-    order.push(tier);
-  }
-  return { order, models };
+  const order: Tier[] = models.map((_, index) => `local${index + 1}`);
+  const modelMap: Record<string, string> = {};
+  const descriptions: Record<string, string> = {};
+  models.forEach((entry, index) => {
+    modelMap[order[index]] = entry.model;
+    if (entry.description !== undefined) descriptions[order[index]] = entry.description;
+  });
+  return { order, models: modelMap, descriptions };
 }
 
 /** Options for {@linkcode createApp}. */
@@ -131,7 +123,7 @@ export async function createApp(options: AppOptions): Promise<App> {
     approveRm: options.approveRm,
   });
 
-  const localTiers = resolveLocalTiers(options.env, options.fileValues);
+  const localTiers = resolveLocalTiers(resolveModels(options.fileValues));
   const firstModel = localTiers.order.length > 0
     ? localTiers.models[localTiers.order[0]]
     : undefined;
@@ -141,14 +133,14 @@ export async function createApp(options: AppOptions): Promise<App> {
       json?: boolean;
       tools?: readonly ToolSpec[];
     }) => {
-      // `judge` and `verify` run on the smallest configured model; tier
-      // purposes resolve to that tier's user-configured model.
+      // `judge` and `verify` run on the first (smallest) configured model;
+      // tier purposes resolve to that tier's user-configured model.
       const model = purpose === "judge" || purpose === "verify"
         ? firstModel
         : localTiers.models[purpose];
       if (model === undefined) {
         throw new Error(
-          `no model configured for "${purpose}" — set NOA_MODEL_LOCAL1`,
+          `no model configured for "${purpose}" — add models to config.json`,
         );
       }
       return ollamaChat({
@@ -195,6 +187,7 @@ export async function createApp(options: AppOptions): Promise<App> {
   const deps: CascadeDeps = {
     chatFor,
     localTiers: localTiers.order,
+    tierDescriptions: localTiers.descriptions,
     gate,
     clouds,
     forcedTier: forcedTierOf(options.model, options.onLog),
@@ -216,19 +209,16 @@ function forcedTierOf(
   onLog: (message: string) => void,
 ): CascadeDeps["forcedTier"] {
   if (model === undefined) return undefined;
-  // Old, model-size-derived names still work as aliases.
-  const aliases: Record<string, CascadeDeps["forcedTier"]> = {
-    local1: "local1",
-    local2: "local2",
-    local3: "local3",
+  // Old, model-size-derived names still work as aliases onto positions.
+  const aliases: Record<string, string> = {
     local3b: "local1",
     local8b: "local2",
     local14b: "local3",
-    mistral: "mistral",
-    claude: "claude",
   };
-  const tier = aliases[model];
-  if (tier !== undefined) return tier;
+  const tier = aliases[model] ?? model;
+  if (/^local\d+$/.test(tier) || tier === "mistral" || tier === "claude") {
+    return tier;
+  }
   onLog(`model "${model}" is not supported yet — routing to cloud instead`);
   return "mistral";
 }
