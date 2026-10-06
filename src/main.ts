@@ -16,6 +16,20 @@ import { runSetup, type SetupInteract } from "./setup.ts";
 
 const VERSION = "0.1.0";
 
+/** Reads one visible line from stdin (the terminal echoes as the user types). */
+async function readLine(): Promise<string> {
+  const decoder = new TextDecoder();
+  const buffer = new Uint8Array(1);
+  let line = "";
+  while (true) {
+    const read = await Deno.stdin.read(buffer);
+    if (read === null) break;
+    if (buffer[0] === 10) break;
+    line += decoder.decode(buffer);
+  }
+  return line.trim();
+}
+
 /** Terminal-backed setup interaction. */
 const terminalInteract: SetupInteract = {
   confirm: async (message) => {
@@ -23,6 +37,10 @@ const terminalInteract: SetupInteract = {
     return /^(y|yes)$/i.test(answer.trim());
   },
   secret: async (message) => promptSecret(message),
+  text: async (message) => {
+    console.error(message);
+    return await readLine();
+  },
 };
 
 const setup = defineCommand({

@@ -61,7 +61,8 @@ Deno.test("judge: the system prompt lists the user's tiers and descriptions", as
   assert(prompt.includes("- local1: trivia and chat"));
   assert(prompt.includes("- local2: code review"));
   assert(prompt.includes("- cloud:"));
-  assert(prompt.includes('"local1","local2","cloud"'));
+  assert(prompt.includes('"tier": "local1 | local2 | cloud"'));
+  assert(prompt.includes("never a list"));
 });
 
 Deno.test("judge: legacy tier names map onto positions", async () => {

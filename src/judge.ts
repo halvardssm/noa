@@ -27,14 +27,14 @@ export function judgeSystemPrompt(tiers: readonly TierInfo[]): string {
     `- ${tier.name}: ${tier.description ?? `local tier ${index + 1}`}`
   );
   lines.push(`- cloud: ${CLOUD_DESCRIPTION}`);
-  const names = JSON.stringify([...tiers.map((tier) => tier.name), "cloud"]);
+  const names = [...tiers.map((tier) => tier.name), "cloud"].join(" | ");
   return `You are the router of a local AI CLI. Classify the user's request and rewrite it.
 
 Tiers (in escalation order; each maps to a model the user configured):
 ${lines.join("\n")}
 
-Respond with ONLY a JSON object:
-{"tier": ${names}, "reason": "one short sentence", "improved_prompt": "the user's intent, rewritten to be clearer and more complete"}
+Respond with ONLY a JSON object where "tier" is the string "${names.split(" | ")[0]}" — exactly one of these tier names, never a list:
+{"tier": "${names}", "reason": "one short sentence", "improved_prompt": "the user's intent, rewritten to be clearer and more complete"}
 
 The improved_prompt must preserve the user's intent exactly; never add tasks they did not ask for. If the user asks for an ACTION — to run a command, read a file, list a directory, or fetch a URL — the improved_prompt must request that exact action to be performed, not a description or explanation of it. Preserve exact text the user wants repeated or echoed (e.g. "reply with exactly ...") verbatim.`;
 }
@@ -72,8 +72,13 @@ export async function judge(
     return fallback(question, fallbackTier);
   }
   const record = parsed as Record<string, unknown>;
-  const tier = typeof record.tier === "string"
-    ? normalizeTier(record.tier, options.tiers)
+  // Small models sometimes emit the tier as a one-element list.
+  const tierRaw = Array.isArray(record.tier) &&
+      record.tier.length === 1 && typeof record.tier[0] === "string"
+    ? record.tier[0]
+    : record.tier;
+  const tier = typeof tierRaw === "string"
+    ? normalizeTier(tierRaw, options.tiers)
     : null;
   const improved = typeof record.improved_prompt === "string" &&
       record.improved_prompt.trim() !== ""

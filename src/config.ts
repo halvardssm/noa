@@ -264,6 +264,19 @@ export function resolveModels(
   }));
 }
 
+/**
+ * Writes the model cascade into the config file (setup flow). Preserves all
+ * other settings; validated by the schema before writing.
+ */
+export async function writeModels(
+  path: string,
+  models: readonly ModelEntry[],
+): Promise<void> {
+  const config = await loadConfig(path);
+  config["models"] = [...models];
+  await writeConfig(path, config);
+}
+
 /** Whether a setting name looks like a secret (`*_KEY`, `*_TOKEN`, `*_SECRET`). */
 export function isSecretKey(key: string): boolean {
   return /(KEY|TOKEN|SECRET)$/i.test(key);
