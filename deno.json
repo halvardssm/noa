@@ -17,7 +17,7 @@
   "tasks": {
     "run": "deno run -A cli.ts",
     "dev": "deno run -A --watch cli.ts",
-    "test": "deno test -A",
+    "test": "NOA_TEST=1 deno test -A",
     "install": "deno install --config deno.json -g -f --name noa -A cli.ts",
     "check": "deno fmt --check && deno lint && deno check",
     "fix": "deno fmt && deno lint --fix"

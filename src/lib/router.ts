@@ -1,8 +1,4 @@
-import type {
-  ChatAnswer,
-  ChatMessage,
-  ToolSpec,
-} from "./providers/ollama-old.ts";
+import type { ChatAnswer, ChatMessage, ToolSpec } from "./providers/ollama.ts";
 import type { CloudProvider } from "./providers/cloud.ts";
 import type { RunResult } from "./tools.ts";
 import { judge, type Judgment, type Tier, type TierInfo } from "./judge.ts";
@@ -389,9 +385,21 @@ async function agentLoop(
     { role: "system", content: AGENT_SYSTEM },
     { role: "user", content: prompt },
   ];
+  let previous = "";
   for (let round = 0; round < maxRounds; round++) {
     const answer = await chat(messages, { tools: [RUN_COMMAND_TOOL] });
     if (answer.toolCalls.length === 0) return answer.content;
+    // A model that asks for the same run again with nothing new in
+    // between is looping; escalating beats burning the round budget.
+    const signature = JSON.stringify(
+      answer.toolCalls.filter((c) => c.name === "run_command")
+        .map((c) => [c.args.command, c.args.args]),
+    );
+    if (signature !== "[]" && signature === previous) {
+      log(`${label} repeated the same tool call without progress — escalating`);
+      return "";
+    }
+    previous = signature;
     messages.push({
       role: "assistant",
       content: answer.content,

@@ -107,10 +107,6 @@ export async function ollamaChat(
   let response;
   try {
     response = await request();
-    // The daemon sometimes fails to marshal a completed generation
-    // (e.g. a malformed tool call) and answers 5xx; one fresh attempt
-    // usually succeeds. Retry only server errors, never 4xx.
-    if (response.status >= 500) response = await request();
   } catch {
     throw new Error(
       `Ollama is not running at ${baseUrl} — start it with \`ollama serve\``,

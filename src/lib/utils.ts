@@ -24,10 +24,13 @@ export function isInteractive(): boolean {
 
 /**
  * A yes/no question. Under `NOA_TEST=1` the answer is hardcoded to
- * `true` — no test values are passed through the environment.
+ * `true` — no test values are passed through the environment. Without
+ * a terminal there is no question: waiting on stdin (a pipe that may
+ * never close) would hang, so the answer is `false`.
  */
 export function confirm(message: string): boolean {
   if (isTestMode()) return true;
+  if (!Deno.stdin.isTerminal()) return false;
   return globalThis.confirm(message);
 }
 

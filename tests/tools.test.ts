@@ -287,18 +287,20 @@ Deno.test("gate: rm requires approval even when allowlisted — a declined confi
   const ws = await tempWorkspace();
   try {
     await Deno.writeTextFile(`${ws.dir}/notes.txt`, "x");
-    // Without NOA_TEST the global confirm dialog answers itself false
+    // Outside NOA_TEST the global confirm dialog answers itself false
     // on a non-interactive stdin, so approval is always declined.
-    const gate = await createGate({
-      allowTools: ["rm"],
-      allowPaths: [ws.dir],
+    await withEnv({ NOA_TEST: undefined }, async () => {
+      const gate = await createGate({
+        allowTools: ["rm"],
+        allowPaths: [ws.dir],
+      });
+      await assertRejects(
+        () => gate.run("rm", [`${ws.dir}/notes.txt`]),
+        Error,
+        "not approved",
+      );
+      assert(await exists(`${ws.dir}/notes.txt`), "the file is untouched");
     });
-    await assertRejects(
-      () => gate.run("rm", [`${ws.dir}/notes.txt`]),
-      Error,
-      "not approved",
-    );
-    assert(await exists(`${ws.dir}/notes.txt`), "the file is untouched");
   } finally {
     await ws.cleanup();
   }
@@ -334,7 +336,7 @@ Deno.test("gate: rm with approval runs and stays screened", async () => {
 Deno.test("gate: rm without a terminal is always rejected", async () => {
   const ws = await tempWorkspace();
   try {
-    {
+    await withEnv({ NOA_TEST: undefined }, async () => {
       const gate = await createGate({
         allowTools: ["rm"],
         allowPaths: [ws.dir],
@@ -344,7 +346,7 @@ Deno.test("gate: rm without a terminal is always rejected", async () => {
         Error,
         "not approved",
       );
-    }
+    });
   } finally {
     await ws.cleanup();
   }
@@ -390,11 +392,13 @@ Deno.test("gate: a bare --allow-tools (wildcard) allows any command, but not its
       "outside the allowed paths",
     );
     // rm approval still applies: no terminal, no NOA_TEST -> declined.
-    await assertRejects(
-      () => gate.run("rm", [`${ws.dir}/notes.txt`]),
-      Error,
-      "not approved",
-    );
+    await withEnv({ NOA_TEST: undefined }, async () => {
+      await assertRejects(
+        () => gate.run("rm", [`${ws.dir}/notes.txt`]),
+        Error,
+        "not approved",
+      );
+    });
   } finally {
     await ws.cleanup();
     await Deno.remove(outside);

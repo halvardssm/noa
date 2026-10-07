@@ -2,10 +2,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { extractJson, judge } from "../src/lib/judge.ts";
 import { verify } from "../src/lib/verify.ts";
 import { cascade } from "../src/lib/router.ts";
-import type {
-  ChatAnswer,
-  ChatMessage,
-} from "../src/lib/providers/ollama-old.ts";
+import type { ChatAnswer, ChatMessage } from "../src/lib/providers/ollama.ts";
 import type { ChatFn } from "../src/lib/router.ts";
 import type { Tier } from "../src/lib/judge.ts";
 import { withLogRecords } from "./helpers.ts";
@@ -192,6 +189,18 @@ Deno.test("cascade: easy question answered on 3b and passes verification", async
   const answer = await run("what is 2+2", deps);
   assertEquals(answer, "4");
   assert(fx.logs.some((l) => l.includes("local1")));
+});
+
+Deno.test("cascade: a tier repeating the same tool call escalates", async () => {
+  const { fx, deps, run } = fixture({
+    judge: [judgmentJson("local1", "improved")],
+    local1: ["TOOL ls -lh", "TOOL ls -lh"],
+    local2: ["recovered answer"],
+    verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
+  });
+  const answer = await run("q", deps);
+  assertEquals(answer, "recovered answer");
+  assert(fx.logs.some((l) => l.includes("repeated the same tool call")));
 });
 
 Deno.test("cascade: failed verification escalates to the next local tier", async () => {

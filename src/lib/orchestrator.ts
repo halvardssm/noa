@@ -3,7 +3,7 @@ import {
   type ChatMessage,
   ollamaChat,
   type ToolSpec,
-} from "./providers/ollama-old.ts";
+} from "./providers/ollama.ts";
 import {
   anthropicProvider,
   type CloudProvider,

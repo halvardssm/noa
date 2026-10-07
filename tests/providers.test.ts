@@ -1,8 +1,8 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { ollamaChat } from "../src/lib/providers/ollama-old.ts";
 import { ollamaIsUp } from "../src/lib/ollama.ts";
 import { anthropicChat, mistralChat } from "../src/lib/providers/cloud.ts";
 import { type FetchStub, jsonResponse, withEnv, withFetch } from "./helpers.ts";
+import { ollamaChat } from "../src/lib/providers/ollama.ts";
 
 Deno.test("ollama: sends the expected chat request", async () => {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -150,13 +150,21 @@ Deno.test("mistral: sends the chat completion request with auth", async () => {
 });
 
 Deno.test("mistral: model is configurable", async () => {
+  const calls: { init: RequestInit }[] = [];
+  const stub: FetchStub = (_url, init) => {
+    calls.push({ init: init! });
+    return jsonResponse({ choices: [{ message: { content: "x" } }] });
+  };
   await withEnv({ MISTRAL_API_KEY: "k" }, () =>
-    withFetch(
-      () => jsonResponse({ choices: [{ message: { content: "x" } }] }),
-      async () => {
-        await mistralChat({ prompt: "p", model: "mistral-small-latest" });
-      },
-    ));
+    withFetch(stub, async () => {
+      const answer = await mistralChat({
+        prompt: "p",
+        model: "mistral-small-latest",
+      });
+      assertEquals(answer, "x");
+      const body = JSON.parse(calls[0].init.body as string);
+      assertEquals(body.model, "mistral-small-latest");
+    }));
 });
 
 Deno.test("mistral: missing key fails before any request", async () => {
