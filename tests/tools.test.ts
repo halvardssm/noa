@@ -12,6 +12,38 @@ async function tempWorkspace(): Promise<
   };
 }
 
+/**
+ * Runs one command through a gate in a subprocess with stdin closed
+ * and NOA_TEST removed: `confirm` declines without reading anything,
+ * whatever stdin the test runner provides.
+ */
+async function runGate(
+  allowTools: readonly string[],
+  allowPaths: string,
+  command: string,
+  args: readonly string[],
+): Promise<string> {
+  const env = { NOA_TEST: "" }; // overwrite the task's global value
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "-A",
+      "--no-check",
+      "tests/gate_child.ts",
+      allowTools.join(","),
+      allowPaths,
+      command,
+      ...args,
+    ],
+    cwd: Deno.cwd(),
+    env,
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  return new TextDecoder().decode(output.stdout).trim();
+}
+
 Deno.test("gate: runs an allowlisted command and captures output", async () => {
   const ws = await tempWorkspace();
   try {
@@ -287,20 +319,13 @@ Deno.test("gate: rm requires approval even when allowlisted — a declined confi
   const ws = await tempWorkspace();
   try {
     await Deno.writeTextFile(`${ws.dir}/notes.txt`, "x");
-    // Outside NOA_TEST the global confirm dialog answers itself false
-    // on a non-interactive stdin, so approval is always declined.
-    await withEnv({ NOA_TEST: undefined }, async () => {
-      const gate = await createGate({
-        allowTools: ["rm"],
-        allowPaths: [ws.dir],
-      });
-      await assertRejects(
-        () => gate.run("rm", [`${ws.dir}/notes.txt`]),
-        Error,
-        "not approved",
-      );
-      assert(await exists(`${ws.dir}/notes.txt`), "the file is untouched");
-    });
+    // Without NOA_TEST and without a terminal, confirm answers itself
+    // false — run in a subprocess so the runner's stdin never leaks in.
+    const output = await runGate(["rm"], ws.dir, "rm", [
+      `${ws.dir}/notes.txt`,
+    ]);
+    assert(output.includes("not approved"), output);
+    assert(await exists(`${ws.dir}/notes.txt`), "the file is untouched");
   } finally {
     await ws.cleanup();
   }
@@ -336,17 +361,12 @@ Deno.test("gate: rm with approval runs and stays screened", async () => {
 Deno.test("gate: rm without a terminal is always rejected", async () => {
   const ws = await tempWorkspace();
   try {
-    await withEnv({ NOA_TEST: undefined }, async () => {
-      const gate = await createGate({
-        allowTools: ["rm"],
-        allowPaths: [ws.dir],
-      });
-      await assertRejects(
-        () => gate.run("rm", [`${ws.dir}/notes.txt`]),
-        Error,
-        "not approved",
-      );
-    });
+    await Deno.writeTextFile(`${ws.dir}/notes.txt`, "x");
+    const output = await runGate(["rm"], ws.dir, "rm", [
+      `${ws.dir}/notes.txt`,
+    ]);
+    assert(output.includes("not approved"), output);
+    assert(await exists(`${ws.dir}/notes.txt`), "the file is untouched");
   } finally {
     await ws.cleanup();
   }
@@ -392,13 +412,10 @@ Deno.test("gate: a bare --allow-tools (wildcard) allows any command, but not its
       "outside the allowed paths",
     );
     // rm approval still applies: no terminal, no NOA_TEST -> declined.
-    await withEnv({ NOA_TEST: undefined }, async () => {
-      await assertRejects(
-        () => gate.run("rm", [`${ws.dir}/notes.txt`]),
-        Error,
-        "not approved",
-      );
-    });
+    const rmOutput = await runGate(["*"], ws.dir, "rm", [
+      `${ws.dir}/notes.txt`,
+    ]);
+    assert(rmOutput.includes("not approved"), rmOutput);
   } finally {
     await ws.cleanup();
     await Deno.remove(outside);
