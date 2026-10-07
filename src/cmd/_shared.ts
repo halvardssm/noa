@@ -1,11 +1,11 @@
-import type { Options } from "@stdx/cli/command";
-import { ensureConfigFile, NoaConfig, SUGGESTED_TOOLS } from "../lib/config.ts";
-import { ensureDaemon } from "../lib/ollama.ts";
+import type { Flags } from "@stdx/cli/command";
 import {
-  configureLogging,
-  parseLogLevel,
-  type LogLevel,
-} from "../lib/log.ts";
+  ensureConfigFile,
+  type NoaConfig,
+  SUGGESTED_TOOLS,
+} from "../lib/config.ts";
+import { ensureDaemon } from "../lib/ollama.ts";
+import { configureLogging, type LogLevel, parseLogLevel } from "../lib/log.ts";
 import { exitWithError } from "../lib/io.ts";
 
 /**
@@ -22,7 +22,7 @@ export const startDaemonOption = {
     description:
       "ensure the Ollama daemon is running before the command runs, starting it in the background when it is not (idempotent; exit code 2 when ollama is not installed; warns to start the desktop app and exits when it is installed instead)",
   },
-} as const satisfies Options;
+} as const satisfies Flags;
 
 /**
  * The `--log-level` flag, declared on every command: LogTape's level
@@ -34,7 +34,7 @@ export const logLevelOption = {
     description:
       "log verbosity: fatal | error | warning | info | debug | trace (default: info)",
   },
-} as const satisfies Options;
+} as const satisfies Flags;
 
 /**
  * Configures logging from the flags, before anything logs: the level
@@ -69,7 +69,7 @@ export const questionOptions = {
   allowTools: {
     type: "string",
     description:
-      `tool allowlist for this session, comma-separated (example: ${SUGGESTED_TOOLS})`,
+      `tool permissions, Deno-style: bare --allow-tools allows every command; --allow-tools=cmd1,cmd2 allows only those (example: --allow-tools=${SUGGESTED_TOOLS})`,
   },
   allowPaths: {
     type: "string",
@@ -79,7 +79,7 @@ export const questionOptions = {
     type: "boolean",
     description: "skip the verification pass",
   },
-} as const satisfies Options;
+} as const satisfies Flags;
 
 /**
  * Preparation shared by every command: ensures the config file, then —

@@ -46,8 +46,7 @@ noa implements no tools of its own. The agent's only capability is invoking **al
    *Honest limits:* this is screening of arguments, not a sandbox. An allowlisted binary can still touch paths noa cannot see (its own config files, env vars, exotic flags). Runtime-enforced path boundaries for child processes would require OS-level sandboxing (sandbox-exec, bubblewrap/landlock) — explicitly out of scope. Deno permission flags bind noa's own process only (rule 6).
 2. **GET-only web:** `curl` is the only default network tool, and it is screened: invocations containing any method-, body-, or upload-defining argument (`-X` with a non-GET method, `-d`/`--data*`, `-T`/`--upload-file`, `-F`/`--form*`, `--request`) are rejected. This is also argument-level, not structural — the default posture is "GET, no body"; users who want stronger guarantees remove `curl` from their allowlist.
 3. **Allowlisted commands:** there is **no built-in default** — no tools are callable until the user grants them, and noa logs a hint with the suggested example (`ls,cat,head,tail,wc,grep,find,jq,curl`, also shown in `--help`) whenever the allowlist is empty. The effective allowlist resolves by precedence — each level *replaces* (does not merge with) the one below:
-   - CLI flag `--allow-tools <cmd,...>` (this invocation)
-   - config file (`noa config set NOA_TOOLS <cmd,...>`)
+   - CLI flag `--allow-tools` (this invocation), Deno-style: bare `--allow-tools` allows every command — with the other rules (path screening, GET-only curl, `rm` approval) still enforced — and `--allow-tools=cmd1,cmd2` allows exactly those
    - nothing (no tools callable)
 
    Extending the allowlist is an explicit, logged escalation decision that belongs to the user, not the model. Commands are executed directly (no shell), so pipes, `;`, and `$(...)` injection are impossible. Every invocation is logged to stderr. Custom entries are resolved to absolute paths; entries inside the writable workspace are rejected (an allowed binary in `~/dev` could be overwritten and then spawned — Deno's docs call out exactly this `--allow-write` + `--allow-run` trap). Note: `node` is deliberately absent from the default allowlist — it is arbitrary-execution and voids every other rule; adding it is the user's informed choice.
@@ -102,10 +101,10 @@ noa --prompt <q> --model <m>    force one Ollama model — no routing, no verifi
                                  For cloud models, pair with --provider.
 noa --prompt <q> --provider <p>  the cloud provider for --model: mistral | anthropic; the
                                  provider's default model is used when --model is unset
+noa --prompt <q> --allow-tools   Deno-style: bare --allow-tools allows every command
 noa --prompt <q> --allow-tools <cmd,...>
-                                 set the tool allowlist for this invocation (highest precedence;
-                                 example: --allow-tools ls,cat,head,tail,wc,grep,find,jq,curl;
-                                 persist via noa config set NOA_TOOLS)
+                                 allow only those tools for this invocation (highest
+                                 precedence; example: --allow-tools ls,cat,head,tail,wc,grep,find,jq,curl)
 noa --prompt <q> --allow-paths <p,...>
                                  set allowed paths for this invocation (highest precedence;
                                  replaces NOA_ALLOW_PATHS / config / default: the current directory)

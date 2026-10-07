@@ -12,14 +12,15 @@
       "LICENSE"
     ]
   },
+  "minimumDependencyAge": 0,
   "nodeModulesDir": "none",
   "tasks": {
     "run": "deno run -A cli.ts",
     "dev": "deno run -A --watch cli.ts",
-    "compile:base": "deno compile -A --bundle --minify --app-name noa",
-    "compile:darwin:aarch": "deno task compile:base --target aarch64-apple-darwin --output ./dist/noa cli.ts",
-    "compile": "deno task compile:darwin:aarch",
-    "test": "deno test -A"
+    "test": "deno test -A",
+    "install": "deno install --config deno.json -g -f --name noa -A cli.ts",
+    "check": "deno fmt --check && deno lint && deno check",
+    "fix": "deno fmt && deno lint --fix"
   },
   "imports": {
     "@logtape/logtape": "jsr:@logtape/logtape@^2.4.0",
@@ -29,7 +30,7 @@
     "@std/dotenv": "jsr:@std/dotenv@^0.225.8",
     "@std/fs": "jsr:@std/fs@^1.0.24",
     "@std/path": "jsr:@std/path@^1.1.6",
-    "@stdx/cli": "jsr:@stdx/cli@^0.1.1",
+    "@stdx/cli": "jsr:@stdx/cli@^0.1.2",
     "@stdx/fs": "jsr:@stdx/fs@^0.1.1",
     "ollama": "npm:ollama@^0.6.4",
     "zod": "jsr:@zod/zod@^4.1.12"

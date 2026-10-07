@@ -10,7 +10,7 @@ import {
 export const replCommand = defineCommand({
   name: "repl",
   description: "Interactive session: one question per line",
-  options: { ...questionOptions, ...startDaemonOption, ...logLevelOption },
+  flags: { ...questionOptions, ...startDaemonOption, ...logLevelOption },
   async run(context) {
     const config = await prepareCommand(context.flags);
     if (typeof config === "number") return config;

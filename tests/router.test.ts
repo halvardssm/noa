@@ -11,7 +11,7 @@ import type { Tier } from "../src/lib/judge.ts";
 import { withLogRecords } from "./helpers.ts";
 
 function chatReturning(text: string): ChatFn {
-  return async () => ({ content: text, toolCalls: [] });
+  return () => Promise.resolve({ content: text, toolCalls: [] });
 }
 
 function judgmentJson(
@@ -50,9 +50,12 @@ Deno.test("judge: parses tier, reason, and improved prompt", async () => {
 
 Deno.test("judge: the system prompt lists the user's tiers and descriptions", async () => {
   const seen: string[] = [];
-  const chat: ChatFn = async (messages) => {
+  const chat: ChatFn = (messages) => {
     seen.push(messages[0].content);
-    return { content: judgmentJson("local1", "p"), toolCalls: [] };
+    return Promise.resolve({
+      content: judgmentJson("local1", "p"),
+      toolCalls: [],
+    });
   };
   await judge("q", {
     chat,
@@ -134,17 +137,17 @@ function fixture(
   const fx: Fixture = { chats: {}, logs: [], gateCalls: [] };
   for (const [tier, replies] of Object.entries(scripts)) {
     let i = 0;
-    fx.chats[tier] = async () => {
+    fx.chats[tier] = () => {
       const reply = replies[Math.min(i, replies.length - 1)];
       i++;
       if (reply.startsWith("TOOL")) {
         const [, command, ...args] = reply.split(" ");
-        return {
+        return Promise.resolve({
           content: "",
           toolCalls: [{ name: "run_command", args: { command, args } }],
-        };
+        });
       }
-      return { content: reply, toolCalls: [] };
+      return Promise.resolve({ content: reply, toolCalls: [] });
     };
   }
   const localTiers = Object.keys(scripts)
@@ -157,13 +160,13 @@ function fixture(
         throw new Error(`no chat for ${tier}`);
       }),
     gate: {
-      run: async (command: string, args: string[]) => {
+      run: (command: string, args: string[]) => {
         fx.gateCalls.push({ command, args });
-        return {
+        return Promise.resolve({
           code: 0,
           stdout: opts.gateResult ?? "",
           stderr: "",
-        };
+        });
       },
     },
   };
@@ -219,9 +222,9 @@ Deno.test("cascade: cloud receives the improved prompt, never the raw one", asyn
     clouds: [{
       name: "mistral",
       keySetting: "MISTRAL_API_KEY",
-      chat: async (prompt) => {
+      chat: (prompt) => {
         prompts.push(prompt);
-        return "cloud answer";
+        return Promise.resolve("cloud answer");
       },
     }],
   });
@@ -273,7 +276,7 @@ Deno.test("cascade: forced anthropic without configuration names its key", async
 });
 
 Deno.test("cascade: all cloud providers failing reports every failure", async () => {
-  const { deps, run } = fixture({
+  const { deps } = fixture({
     judge: [judgmentJson("local1", "improved")],
     local1: ["bad"],
     verify: [JSON.stringify({ verdict: "FAIL", reason: "nope" })],
@@ -420,7 +423,7 @@ Deno.test("cascade: a daemon-down error is fatal, not skippable", async () => {
 });
 
 Deno.test("cascade: --no-verify returns the first answer", async () => {
-  const { fx, deps, run } = fixture({
+  const { deps, run } = fixture({
     judge: [judgmentJson("local1", "improved")],
     local1: ["first answer"],
     verify: [JSON.stringify({ verdict: "FAIL", reason: "never consulted" })],
@@ -438,9 +441,9 @@ Deno.test("cascade: verify consults the question and the answer", async () => {
   });
   const chatFor = (tier: string) =>
     tier === "verify"
-      ? async (messages: readonly ChatMessage[]) => {
+      ? (messages: readonly ChatMessage[]) => {
         seen.push([...messages]);
-        return { content: "", toolCalls: [] } as ChatAnswer;
+        return Promise.resolve({ content: "", toolCalls: [] } as ChatAnswer);
       }
       : (deps.chatFor as (t: string) => ChatFn)(tier);
   await run("the question", { ...deps, chatFor });
@@ -486,10 +489,11 @@ Deno.test("cascade: a forced model tag answers directly, bypassing judge and ver
   });
   const answer = await run("the raw question", {
     ...deps,
-    chatForModel: (model) => async () => ({
-      content: `${model} answers`,
-      toolCalls: [],
-    }),
+    chatForModel: (model) => () =>
+      Promise.resolve({
+        content: `${model} answers`,
+        toolCalls: [],
+      }),
     forced: { kind: "model", model: "qwen3:4b" },
   });
   assertEquals(answer, "qwen3:4b answers");
@@ -535,16 +539,17 @@ Deno.test("cascade: a forced tier still validates configuration", async () => {
 });
 
 Deno.test("cascade: a forced model with no answer errors clearly", async () => {
-  const { deps, run } = fixture({
+  const { deps } = fixture({
     judge: [judgmentJson("local1", "improved")],
     local1: ["answer"],
     verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
   });
-  const error = await assertRejects(
+  await assertRejects(
     () =>
       cascade("q", {
         ...deps,
-        chatForModel: () => async () => ({ content: "", toolCalls: [] }),
+        chatForModel: () => () =>
+          Promise.resolve({ content: "", toolCalls: [] }),
         forced: { kind: "model", model: "qwen3:4b" },
       }),
     Error,

@@ -6,7 +6,7 @@ import { type FetchStub, jsonResponse, withEnv, withFetch } from "./helpers.ts";
 
 Deno.test("ollama: sends the expected chat request", async () => {
   const calls: { url: string; init: RequestInit }[] = [];
-  const stub: FetchStub = async (url, init) => {
+  const stub: FetchStub = (url, init) => {
     calls.push({ url: String(url), init: init! });
     return jsonResponse({
       message: { role: "assistant", content: "4" },
@@ -46,7 +46,7 @@ Deno.test("ollama: passes tools and parses tool calls", async () => {
     },
   }];
   await withFetch(
-    async () =>
+    () =>
       jsonResponse({
         message: {
           role: "assistant",
@@ -92,7 +92,7 @@ Deno.test("ollama: connection refused gives a clear daemon hint", async () => {
 
 Deno.test("ollama: HTTP errors carry the status", async () => {
   await withFetch(
-    async () => jsonResponse({ error: "boom" }, 500),
+    () => jsonResponse({ error: "boom" }, 500),
     async () => {
       await assertRejects(
         () =>
@@ -108,7 +108,7 @@ Deno.test("ollama: HTTP errors carry the status", async () => {
 });
 
 Deno.test("ollamaIsUp: true on a listening daemon, false when down", async () => {
-  await withFetch(async () => jsonResponse({ version: "0.12.0" }), async () => {
+  await withFetch(() => jsonResponse({ version: "0.12.0" }), async () => {
     assertEquals(await ollamaIsUp(), true);
   });
   await withFetch(
@@ -121,7 +121,7 @@ Deno.test("ollamaIsUp: true on a listening daemon, false when down", async () =>
 
 Deno.test("mistral: sends the chat completion request with auth", async () => {
   const calls: { url: string; init: RequestInit }[] = [];
-  const stub: FetchStub = async (url, init) => {
+  const stub: FetchStub = (url, init) => {
     calls.push({ url: String(url), init: init! });
     return jsonResponse({
       choices: [{ message: { role: "assistant", content: "cloud answer" } }],
@@ -152,7 +152,7 @@ Deno.test("mistral: sends the chat completion request with auth", async () => {
 Deno.test("mistral: model is configurable", async () => {
   await withEnv({ MISTRAL_API_KEY: "k" }, () =>
     withFetch(
-      async () => jsonResponse({ choices: [{ message: { content: "x" } }] }),
+      () => jsonResponse({ choices: [{ message: { content: "x" } }] }),
       async () => {
         await mistralChat({ prompt: "p", model: "mistral-small-latest" });
       },
@@ -161,7 +161,7 @@ Deno.test("mistral: model is configurable", async () => {
 
 Deno.test("mistral: missing key fails before any request", async () => {
   let called = false;
-  const stub: FetchStub = async () => {
+  const stub: FetchStub = () => {
     called = true;
     return jsonResponse({});
   };
@@ -185,7 +185,7 @@ Deno.test("mistral: auth errors name the key setting", async () => {
     { MISTRAL_API_KEY: "wrong" },
     () =>
       withFetch(
-        async () => jsonResponse({ message: "bad key" }, 401),
+        () => jsonResponse({ message: "bad key" }, 401),
         async () => {
           await assertRejects(
             () => mistralChat({ prompt: "p" }),
@@ -199,7 +199,7 @@ Deno.test("mistral: auth errors name the key setting", async () => {
 
 Deno.test("anthropic: sends the messages request with the right headers", async () => {
   const calls: { url: string; init: RequestInit }[] = [];
-  const stub: FetchStub = async (url, init) => {
+  const stub: FetchStub = (url, init) => {
     calls.push({ url: String(url), init: init! });
     return jsonResponse({ content: [{ type: "text", text: "claude answer" }] });
   };
@@ -225,7 +225,7 @@ Deno.test("anthropic: sends the messages request with the right headers", async 
 
 Deno.test("anthropic: missing key fails before any request", async () => {
   let called = false;
-  const stub: FetchStub = async () => {
+  const stub: FetchStub = () => {
     called = true;
     return jsonResponse({});
   };
@@ -247,7 +247,7 @@ Deno.test("anthropic: auth errors name the key setting", async () => {
   await withEnv(
     { ANTHROPIC_API_KEY: "wrong" },
     () =>
-      withFetch(async () => jsonResponse({ message: "bad" }, 401), async () => {
+      withFetch(() => jsonResponse({ message: "bad" }, 401), async () => {
         await assertRejects(
           () => anthropicChat({ prompt: "p" }),
           Error,

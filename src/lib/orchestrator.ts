@@ -77,10 +77,13 @@ function resolveSecurity(
   options: AppOptions,
   cwd: string,
 ): { allowTools: string[]; allowPaths: string[] } {
-  const allowTools = resolveList({
-    flag: options.allowToolsFlag,
-    defaults: [],
-  });
+  // Deno-style permissions: a bare `--allow-tools` (parsed as "") is
+  // the wildcard — every command; a value is an exact allowlist.
+  const allowTools = options.allowToolsFlag === undefined
+    ? []
+    : options.allowToolsFlag === ""
+    ? ["*"]
+    : resolveList({ flag: options.allowToolsFlag, defaults: [] });
   const allowPaths = resolveList({
     flag: options.allowPathsFlag,
     defaults: [cwd],

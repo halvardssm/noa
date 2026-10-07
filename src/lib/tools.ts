@@ -177,10 +177,15 @@ export async function createGate(settings: GateSettings): Promise<Gate> {
     paths: settings.allowPaths,
     async run(command: string, args: readonly string[]): Promise<RunResult> {
       const base = command.split("/").pop()!;
-      if (!allowSet.has(base)) {
+      // `*` (a bare --allow-tools) allows any command; the other
+      // rules — path screening, GET-only curl, rm approval — still
+      // apply to it.
+      if (!allowSet.has("*") && !allowSet.has(base)) {
         log(`rejected: ${command} ${args.join(" ")} (not in the allowlist)`);
         throw new GateError(
-          `"${base}" is not in the allowlist — no tools are configured; tell the user to pass --allow-tools <cmds>`,
+          allowSet.size === 0
+            ? `"${base}" is not in the allowlist — no tools are configured; tell the user to pass --allow-tools`
+            : `"${base}" is not in the allowlist`,
         );
       }
       if (base === "curl") {

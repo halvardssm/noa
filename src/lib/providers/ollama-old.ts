@@ -97,13 +97,20 @@ export async function ollamaChat(
   body.options = { num_ctx: options.numCtx ?? 8192 };
   body.keep_alive = options.keepAlive ?? "5m";
 
-  let response;
-  try {
-    response = await fetch(`${baseUrl}/api/chat`, {
+  const request = () =>
+    fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+
+  let response;
+  try {
+    response = await request();
+    // The daemon sometimes fails to marshal a completed generation
+    // (e.g. a malformed tool call) and answers 5xx; one fresh attempt
+    // usually succeeds. Retry only server errors, never 4xx.
+    if (response.status >= 500) response = await request();
   } catch {
     throw new Error(
       `Ollama is not running at ${baseUrl} — start it with \`ollama serve\``,

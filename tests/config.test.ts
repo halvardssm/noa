@@ -31,11 +31,11 @@ Deno.test("defaultModels: the ministral-3 cascade with complexity and provider",
 });
 
 Deno.test("configDir: NOA_HOME overrides, HOME is the fallback", async () => {
-  await withNoaHome({}, async (dir) => {
+  await withNoaHome({}, (dir) => {
     assertEquals(configDir(), dir);
     assertEquals(configFilePath(), `${dir}/config.json`);
   });
-  await withEnv({ NOA_HOME: undefined }, async () => {
+  await withEnv({ NOA_HOME: undefined }, () => {
     assert(configDir().endsWith("/noa"));
   });
 });

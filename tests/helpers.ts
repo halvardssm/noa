@@ -24,22 +24,25 @@ export type FetchStub = (
   init?: RequestInit,
 ) => Promise<ResponseLike>;
 
-export function jsonResponse(body: unknown, status = 200): ResponseLike {
-  return {
+export function jsonResponse(
+  body: unknown,
+  status = 200,
+): Promise<ResponseLike> {
+  return Promise.resolve({
     ok: status >= 200 && status < 300,
     status,
     json: () => Promise.resolve(body),
-  };
+  });
 }
 
 /** A streaming response carrying the given NDJSON events. */
 export function ndjsonResponse(
   events: unknown[],
   status = 200,
-): ResponseLike {
+): Promise<ResponseLike> {
   const encoder = new TextEncoder();
   const text = events.map((e) => `${JSON.stringify(e)}\n`).join("");
-  return {
+  return Promise.resolve({
     ok: status >= 200 && status < 300,
     status,
     json: () => Promise.resolve(events[events.length - 1]),
@@ -49,7 +52,7 @@ export function ndjsonResponse(
         controller.close();
       },
     }),
-  };
+  });
 }
 
 /**
@@ -80,9 +83,11 @@ export async function withLogRecords<T>(
 /** Sets `env` for the duration of `fn`, restoring (or deleting) after. */
 export async function withEnv(
   env: Record<string, string | undefined>,
-  fn: () => Promise<void>,
+  fn: () => void | Promise<void>,
 ): Promise<void> {
-  const saved = Object.keys(env).map((key) => [key, Deno.env.get(key)] as const);
+  const saved = Object.keys(env).map((key) =>
+    [key, Deno.env.get(key)] as const
+  );
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) Deno.env.delete(key);
     else Deno.env.set(key, value);
@@ -100,7 +105,7 @@ export async function withEnv(
 /** Stubs `globalThis.fetch` for the duration of `fn`. */
 export async function withFetch(
   stub: FetchStub,
-  fn: () => Promise<void>,
+  fn: () => void | Promise<void>,
 ): Promise<void> {
   const real = globalThis.fetch;
   globalThis.fetch = stub as unknown as typeof fetch;
@@ -146,7 +151,7 @@ export async function withErrors<T>(
 /** Runs `fn` with a fresh `NOA_HOME` (and optionally `HOME`) temp dir. */
 export async function withNoaHome(
   options: { home?: boolean } = {},
-  fn: (dir: string) => Promise<void>,
+  fn: (dir: string) => void | Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir({ prefix: "noa-test-" });
   const env: Record<string, string | undefined> = { NOA_HOME: dir };

@@ -365,3 +365,38 @@ async function exists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+Deno.test("gate: a bare --allow-tools (wildcard) allows any command, but not its rules", async () => {
+  const ws = await tempWorkspace();
+  const outside = await Deno.makeTempFile({ prefix: "noa-outside-" });
+  try {
+    const gate = await createGate({
+      allowTools: ["*"],
+      allowPaths: [ws.dir],
+    });
+    // Any command passes the allowlist.
+    const result = await gate.run("echo", ["wildcard"]);
+    assertEquals(result.code, 0);
+    // GET-only curl screening still applies.
+    await assertRejects(
+      () => gate.run("curl", ["-d", "x=1", "https://example.com"]),
+      Error,
+      "GET-only",
+    );
+    // Path screening still applies.
+    await assertRejects(
+      () => gate.run("cat", [outside]),
+      Error,
+      "outside the allowed paths",
+    );
+    // rm approval still applies: no terminal, no NOA_TEST -> declined.
+    await assertRejects(
+      () => gate.run("rm", [`${ws.dir}/notes.txt`]),
+      Error,
+      "not approved",
+    );
+  } finally {
+    await ws.cleanup();
+    await Deno.remove(outside);
+  }
+});

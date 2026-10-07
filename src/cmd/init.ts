@@ -1,5 +1,9 @@
 import { defineCommand } from "@stdx/cli/command";
-import { logLevelOption, prepareLogging, startDaemonOption } from "./_shared.ts";
+import {
+  logLevelOption,
+  prepareLogging,
+  startDaemonOption,
+} from "./_shared.ts";
 import { ensureDaemon } from "../lib/ollama.ts";
 import {
   configFilePath,
@@ -10,17 +14,18 @@ import {
 import { exitWithError, exitWithMessage } from "../lib/io.ts";
 import { getLogger } from "../lib/log.ts";
 
-const logger = getLogger(["noa", "init"]);
 import { systemTotalMemory } from "../lib/system.ts";
 import { pullModels } from "../lib/models.ts";
 import { defaultModelsFor } from "../lib/data.ts";
 import { askSelect, confirm, isInteractive } from "../lib/utils.ts";
 
+const logger = getLogger(["noa", "init"]);
+
 export const initCommand = defineCommand({
   name: "init",
   description:
     "Interactive first-time init: pick the model cascade (default or empty) and the memory cap",
-  options: {
+  flags: {
     ...startDaemonOption,
     ...logLevelOption,
     empty: {

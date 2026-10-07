@@ -1,4 +1,5 @@
 import { createApp } from "./orchestrator.ts";
+import { withSpinner } from "./utils.ts";
 import type { NoaConfig } from "./config.ts";
 import { textEncoder } from "./utils.ts";
 
@@ -56,7 +57,7 @@ export async function runRepl(
     if (line === "") continue;
     if (/^(\/?)?(exit|quit)$/i.test(line)) break;
     try {
-      console.log(await app.ask(line));
+      console.log(await withSpinner("thinking", () => app.ask(line)));
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));
     }

@@ -1,6 +1,7 @@
 import { defineCommand } from "@stdx/cli/command";
 import denoConfig from "../../deno.json" with { type: "json" };
 import { createApp } from "../lib/orchestrator.ts";
+import { withSpinner } from "../lib/utils.ts";
 import { runRepl } from "../lib/io.ts";
 import {
   logLevelOption,
@@ -17,7 +18,7 @@ export const rootCommand = defineCommand({
   version: denoConfig.version,
   description:
     "Local-first AI CLI: the smallest sufficient model answers. Bare `noa` starts an interactive session.",
-  options: {
+  flags: {
     ...questionOptions,
     ...startDaemonOption,
     ...logLevelOption,
@@ -47,7 +48,7 @@ export const rootCommand = defineCommand({
       noVerify: context.flags.noVerify,
     });
 
-    const output = await app.ask(prompt);
+    const output = await withSpinner("thinking", () => app.ask(prompt));
 
     console.info(output);
   },

@@ -6,16 +6,34 @@ import { isTestMode } from "./utils.ts";
 import { getLogger } from "./log.ts";
 
 /**
+ * Whether the daemon already has the model installed. A failed
+ * listing is not fatal: the pull itself reports daemon errors.
+ */
+async function isInstalled(model: string): Promise<boolean> {
+  try {
+    const { models } = await getOllama().list();
+    return models.some((m) => m.name === model || m.name === `${model}:latest`);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Pulls a model from the Ollama library through the local daemon
- * (rule 6: noa never spawns it). The pull is streamed, and each
- * download event drives a live progress bar on stderr; when the
- * daemon rejects the pull, ollama-js throws with its own message.
- * Under `NOA_TEST=1` no bar is rendered — the events are just
- * consumed.
+ * (rule 6: noa never spawns it). An already-installed model just
+ * says so; a real pull is streamed, and each download event drives a
+ * live progress bar that ends filled. When the daemon rejects the
+ * pull, ollama-js throws with its own message. Under `NOA_TEST=1` no
+ * bar is rendered — the events are just consumed.
  */
 export async function pullModel(
   model: string,
 ): Promise<void> {
+  if (await isInstalled(model)) {
+    logger.info(`model '${model}' is already installed`);
+    return;
+  }
+
   logger.info(`pulling model '${model}'...`);
 
   const ollama = getOllama();
@@ -42,6 +60,9 @@ export async function pullModel(
       if (event.total > progress.max) progress.max = event.total;
       progress.value = completed;
     }
+
+    // Completed: the bar's final render shows it filled.
+    if (progress !== null) progress.value = progress.max;
   } catch (error) {
     if (progress !== null) {
       await progress.stop();

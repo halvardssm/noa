@@ -83,7 +83,7 @@ Deno.test("app: warns when the default path is outside home, not when configured
 
 Deno.test("app: ask routes through the local cascade end to end", async () => {
   const seen: string[] = [];
-  const stub: FetchStub = async (_url, init) => {
+  const stub: FetchStub = (_url, init) => {
     const body = JSON.parse((init as RequestInit).body as string);
     seen.push(body.model);
     const user = body.messages?.[body.messages.length - 1]?.content ?? "";
@@ -118,7 +118,7 @@ Deno.test("app: forced mistral without a key gives the export remedy", async () 
 
 Deno.test("app: custom local rules are used per tier", async () => {
   const seen: string[] = [];
-  const stub: FetchStub = async (_url, init) => {
+  const stub: FetchStub = (_url, init) => {
     const body = JSON.parse((init as RequestInit).body as string);
     seen.push(body.model);
     const user = body.messages?.[body.messages.length - 1]?.content ?? "";
@@ -153,7 +153,7 @@ Deno.test("app: custom local rules are used per tier", async () => {
 
 Deno.test("app: rules are ordered by complexity, not file order", async () => {
   const seen: string[] = [];
-  const stub: FetchStub = async (_url, init) => {
+  const stub: FetchStub = (_url, init) => {
     const body = JSON.parse((init as RequestInit).body as string);
     seen.push(body.model);
     if (body.format === "json") {
@@ -177,7 +177,7 @@ Deno.test("app: rules are ordered by complexity, not file order", async () => {
 });
 
 Deno.test("app: a single-rule cascade works", async () => {
-  const stub: FetchStub = async (_url, init) => {
+  const stub: FetchStub = (_url, init) => {
     const body = JSON.parse((init as RequestInit).body as string);
     const user = body.messages?.[body.messages.length - 1]?.content ?? "";
     if (body.format === "json" && user.startsWith("Question:")) {
@@ -201,7 +201,7 @@ Deno.test("app: a single-rule cascade works", async () => {
 
 Deno.test("app: with empty rules, the raw question goes to cloud", async () => {
   const prompts: string[] = [];
-  const stub: FetchStub = async (url, init) => {
+  const stub: FetchStub = (url, init) => {
     if (String(url).includes("mistral.ai")) {
       prompts.push(
         JSON.parse((init as RequestInit).body as string).messages[0].content,
@@ -231,7 +231,7 @@ Deno.test("app: forcing an unconfigured tier names the config", async () => {
 
 Deno.test("app: --model with an Ollama tag uses that model directly", async () => {
   const seen: string[] = [];
-  const stub: FetchStub = async (_url, init) => {
+  const stub: FetchStub = (_url, init) => {
     const body = JSON.parse((init as RequestInit).body as string);
     seen.push(body.model);
     return ollamaBody("direct model answer");
@@ -249,7 +249,7 @@ Deno.test("app: --model with an Ollama tag uses that model directly", async () =
 
 Deno.test("app: only the configured cloud providers are offered, in order", async () => {
   const prompts: string[] = [];
-  const stub: FetchStub = async (url, init) => {
+  const stub: FetchStub = (url, init) => {
     if (String(url).includes("anthropic.com")) {
       prompts.push(
         JSON.parse((init as RequestInit).body as string).messages[0].content,
@@ -287,7 +287,7 @@ Deno.test("app: only the configured cloud providers are offered, in order", asyn
 
 Deno.test("app: a cloud model inside the rules is served by its provider", async () => {
   const seen: string[] = [];
-  const stub: FetchStub = async (url, init) => {
+  const stub: FetchStub = (url, init) => {
     const u = String(url);
     if (u.includes("mistral.ai")) {
       seen.push(
@@ -336,7 +336,7 @@ Deno.test("app: a cloud model inside the rules is served by its provider", async
 
 Deno.test("app: --provider forces the cloud provider for the model", async () => {
   const seen: { url: string; model: string }[] = [];
-  const stub: FetchStub = async (url, init) => {
+  const stub: FetchStub = (url, init) => {
     const body = JSON.parse((init as RequestInit).body as string);
     seen.push({ url: String(url), model: body.model });
     return jsonResponse({
@@ -368,4 +368,19 @@ Deno.test("app: an unknown provider is rejected", async () => {
     Error,
     "unknown provider",
   );
+});
+
+Deno.test("app: a bare --allow-tools resolves to the wildcard, without the hint", async () => {
+  await withLogRecords(async (records) => {
+    const app = await createApp({
+      fileValues: { rules: [] },
+      allowToolsFlag: "",
+    });
+    assertEquals(app.allowTools, ["*"]);
+    const logged = records.map((r) => r.message.join(""));
+    assert(
+      !logged.some((m) => m.includes("no tools are allowed")),
+      "the empty-allowlist hint is not shown for the wildcard",
+    );
+  });
 });

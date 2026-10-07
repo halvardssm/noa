@@ -11,7 +11,8 @@ async function runCli(
     cwd: Deno.cwd(),
     env: {
       ...Deno.env.toObject(),
-      NOA_HOME: env.NOA_HOME ?? (await Deno.makeTempDir({ prefix: "noa-cli-" })),
+      NOA_HOME: env.NOA_HOME ??
+        (await Deno.makeTempDir({ prefix: "noa-cli-" })),
       ...env,
     },
     stdin: input === undefined ? "inherit" : "piped",
@@ -117,5 +118,3 @@ Deno.test("cli: noa repl with a dead daemon exits with instructions", async () =
     assert(result.stderr.includes("Ollama is not running"));
   });
 });
-
-

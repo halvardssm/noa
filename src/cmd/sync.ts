@@ -6,13 +6,13 @@ import {
 } from "./_shared.ts";
 import { getConfigFile } from "../lib/config.ts";
 import { ensureDaemon } from "../lib/ollama.ts";
-import { pullModel, pullModels } from "../lib/models.ts";
+import { pullModels } from "../lib/models.ts";
 
 export const syncCommand = defineCommand({
   name: "sync",
   description:
     "Reads the config file and downloads the ollama models. No guards in place for free storage space or RAM requirements",
-  options: { ...logLevelOption, ...startDaemonOption },
+  flags: { ...logLevelOption, ...startDaemonOption },
   async run(context) {
     await prepareLogging(context.flags);
 

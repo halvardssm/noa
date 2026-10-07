@@ -1,4 +1,4 @@
-import { ModelEntry } from "./config.ts";
+import type { ModelEntry } from "./config.ts";
 
 export const DEFAULT_MODEL_DATA: DefaultModelData[] = [
   {

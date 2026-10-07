@@ -16,7 +16,7 @@ import {
  * (ollama-js reads the pull as an NDJSON stream).
  */
 function ollamaDaemon(pulled: string[]): FetchStub {
-  return async (url, init) => {
+  return (url, init) => {
     const u = String(url);
     if (u.endsWith("/api/version")) return jsonResponse({ version: "0.12.0" });
     if (u.endsWith("/api/pull")) {

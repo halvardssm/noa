@@ -1,8 +1,9 @@
 import {
-  promptSelect,
   type PromptEntryWithValue,
+  promptSelect,
   type PromptSelectOptions,
 } from "@std/cli/unstable-prompt-select";
+import { Spinner } from "@std/cli/unstable-spinner";
 
 export const textEncoder = new TextEncoder();
 export const textDecoder = new TextDecoder();
@@ -52,4 +53,22 @@ export function askSelect<T>(
 /** Whether `path` is `root` itself or inside one of its folders. */
 export function isWithin(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
+}
+
+/**
+ * Shows a spinner on stderr while `task` runs. Skipped under `NOA_TEST=1`
+ * and when stderr is not a terminal, so pipes and tests stay clean.
+ */
+export async function withSpinner<T>(
+  message: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  if (isTestMode() || !Deno.stderr.isTerminal()) return await task();
+  const spinner = new Spinner({ message, output: Deno.stderr });
+  spinner.start();
+  try {
+    return await task();
+  } finally {
+    spinner.stop();
+  }
 }

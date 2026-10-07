@@ -88,8 +88,17 @@ export interface CascadeDeps {
 
 const logger = getLogger(["noa", "router"]);
 
+/** Elapsed seconds between two timestamps, for debug timing logs. */
+function elapsed(from: number, to: number = Date.now()): string {
+  return `${((to - from) / 1000).toFixed(1)}s`;
+}
+
 const AGENT_SYSTEM =
-  `You are a local coding assistant with a run_command tool that executes allowlisted local commands (no shell). You get exactly one turn to answer: never ask the user to run something or offer to do it — just do it with the tool and report the result. You do not know the current date, time, or machine state: any question about live system information requires a command (e.g. \`date\`). Prefer acting with the tool over describing hypothetical output; the tool enforces the security rules and its rejections are final — report them honestly rather than guessing. When you already know the answer, answer directly in plain text.`;
+  `You are a local coding assistant with a run_command tool that executes allowlisted local commands (no shell). You get exactly one turn to answer: never ask the user to run something or offer to do it — just do it with the tool and report the result. You do not know the current date, time, or machine state: any question about live system information requires a command (e.g. \`date\`). Prefer acting with the tool over describing hypothetical output; the tool enforces the security rules and its rejections are final — report them honestly rather than guessing. When you already know the answer, answer directly in plain text.
+
+The tool runs one command with its arguments passed directly — there is no shell: pipes (|), redirects (>), and $(...) are ordinary arguments and will not work. Never invent placeholder values like "undefined": every argument must be a real value the command accepts. To combine steps, run one command, read its output, then run the next.
+
+Commands run in the user's current working directory — the project the user asked about IS that directory. Use relative paths (".", "src") and never ask the user for a directory path: run a command and see.`;
 
 /**
  * Routes a question through the cascade:
@@ -102,6 +111,7 @@ export async function cascade(
   deps: CascadeDeps,
 ): Promise<string> {
   const log = (message: string) => logger.debug(message);
+  const startedAt = Date.now();
   const clouds = deps.clouds ?? [];
   const localTiers = deps.localTiers;
   const targets = deps.tierTargets ?? {};
@@ -132,7 +142,9 @@ export async function cascade(
       }
       const model = forced.model !== undefined ? ` ${forced.model}` : "";
       log(`forced: ${forced.provider}${model} (raw question, no cascade)`);
-      return provider.chat(question, forced.model);
+      const answer = await provider.chat(question, forced.model);
+      log(`forced: ${forced.provider} answered in ${elapsed(startedAt)}`);
+      return answer;
     }
     let chat: ChatFn;
     let label: string;
@@ -156,6 +168,7 @@ export async function cascade(
     if (answer === "") {
       throw new Error(`${label} produced no answer`);
     }
+    log(`forced: ${label} answered in ${elapsed(startedAt)}`);
     return answer;
   }
 
@@ -172,10 +185,13 @@ export async function cascade(
       );
     }
     log("no local models configured — routing to cloud with the raw question");
-    return cloudChain(question, clouds, log);
+    const answer = await cloudChain(question, clouds, log);
+    log(`cascade: cloud answered in ${elapsed(startedAt)}`);
+    return answer;
   }
 
   let judgment: Judgment;
+  const judgeStartAt = Date.now();
   if (ollamaTiers.length === 0) {
     // Only cloud models configured: judging would cost money per request;
     // walk the whole cascade with the raw question instead.
@@ -207,6 +223,7 @@ export async function cascade(
       };
     }
   }
+  const judgedAt = Date.now();
   const judgedModel = targets[judgment.tier] !== undefined
     ? ` model=${targets[judgment.tier].model}`
     : "";
@@ -232,10 +249,17 @@ export async function cascade(
           "no local model passed verification and no cloud provider is configured — export MISTRAL_API_KEY (or ANTHROPIC_API_KEY) in your shell",
         );
       }
-      return cloudChain(judgment.improvedPrompt, clouds, log);
+      const answer = await cloudChain(judgment.improvedPrompt, clouds, log);
+      log(
+        `cascade: cloud answered in ${elapsed(startedAt)} (judge ${
+          elapsed(judgeStartAt, judgedAt)
+        })`,
+      );
+      return answer;
     }
 
     const target = targets[tier];
+    const tierStartAt = Date.now();
     let answer: string;
     if (target !== undefined && target.provider !== "ollama") {
       // A cloud model inside the user's cascade: answered by its provider.
@@ -277,13 +301,30 @@ export async function cascade(
       log(`tier: ${tierLabel(tier)} produced no answer (escalating)`);
       continue;
     }
-    if (!verifying) return answer;
+    if (!verifying) {
+      log(
+        `cascade: ${tierLabel(tier)} answered in ${
+          elapsed(tierStartAt)
+        } (judge ${elapsed(judgeStartAt, judgedAt)}, total ${
+          elapsed(startedAt)
+        })`,
+      );
+      return answer;
+    }
+    const verifyStartAt = Date.now();
     const verdict = await verify(
       question,
       answer,
       { chat: deps.chatFor("verify") },
     );
     if (verdict.pass) {
+      log(
+        `cascade: ${tierLabel(tier)} answered in ${
+          elapsed(tierStartAt)
+        } (verify ${elapsed(verifyStartAt)}, judge ${
+          elapsed(judgeStartAt, judgedAt)
+        }, total ${elapsed(startedAt)})`,
+      );
       log(`verify: PASS (${verdict.reason})`);
       return answer;
     }
@@ -322,8 +363,11 @@ async function cloudChain(
   const failures: string[] = [];
   for (const provider of chain) {
     log(`cloud: ${provider.name} (answer is final, no verification)`);
+    const startedAt = Date.now();
     try {
-      return await provider.chat(prompt);
+      const answer = await provider.chat(prompt);
+      log(`cloud: ${provider.name} answered in ${elapsed(startedAt)}`);
+      return answer;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log(`cloud: ${provider.name} failed (${message})`);
