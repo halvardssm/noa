@@ -4,6 +4,7 @@ import { assert, assertEquals } from "@std/assert";
 async function runCli(
   args: string[],
   env: Record<string, string> = {},
+  input?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const command = new Deno.Command("deno", {
     args: ["run", "-A", "src/main.ts", ...args],
@@ -13,10 +14,18 @@ async function runCli(
       NOA_HOME: env.NOA_HOME ?? (await Deno.makeTempDir({ prefix: "noa-cli-" })),
       ...env,
     },
+    stdin: input === undefined ? "inherit" : "piped",
     stdout: "piped",
     stderr: "piped",
   });
-  const output = await command.output();
+  const process = command.spawn();
+  if (input !== undefined) {
+    const writer = process.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(input));
+    writer.releaseLock();
+    await process.stdin.close();
+  }
+  const output = await process.output();
   return {
     code: output.code,
     stdout: new TextDecoder().decode(output.stdout),
@@ -121,4 +130,32 @@ Deno.test("cli: help lists the subcommands and the prompt flag", async () => {
   assert(result.stdout.includes("config"));
   assert(result.stdout.includes("setup"));
   assert(result.stdout.includes("--prompt"));
+});
+
+Deno.test("cli: bare noa starts the repl; exit ends it", async () => {
+  const result = await runCli([], {}, "exit\n");
+  assertEquals(result.code, 0);
+  assert(result.stderr.includes("noa repl"));
+});
+
+Deno.test("cli: noa repl handles questions and EOF, surviving errors", async () => {
+  await withHome(async (home) => {
+    const result = await runCli(
+      ["repl"],
+      { NOA_HOME: home, OLLAMA_HOST: "http://localhost:1" },
+      "what is 2+2\n",
+    );
+    // The question fails (dead daemon) but the session survives until EOF.
+    assertEquals(result.code, 0);
+    assert(result.stderr.includes("Ollama is not running"));
+    assert(result.stderr.includes("noa repl"));
+    assertEquals(result.stdout, "");
+  });
+});
+
+Deno.test("cli: noa repl quits on exit/quit", async () => {
+  const quit = await runCli(["repl"], {}, "quit\n");
+  assertEquals(quit.code, 0);
+  const slashExit = await runCli(["repl"], {}, "/exit\n");
+  assertEquals(slashExit.code, 0);
 });

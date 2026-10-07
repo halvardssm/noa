@@ -81,6 +81,10 @@ The package never writes inside its own install/repo directory. `deno install`, 
 ## CLI surface
 
 ```
+noa                             bare noa starts an interactive session (the repl)
+noa repl                        the same session, explicit: one question per line,
+                                 each routed independently; exit/quit or Ctrl-D ends it;
+                                 routing logs and the prompt go to stderr, answers to stdout
 noa setup                       interactive first-time setup (models: default or custom, memory cap, keys)
 noa config set <KEY> [VALUE]    write a setting to ~/.config/noa/config.json (prompts with hidden
                                  input if VALUE omitted); e.g. noa config set MISTRAL_API_KEY
