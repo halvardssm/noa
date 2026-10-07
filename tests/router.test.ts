@@ -531,7 +531,7 @@ Deno.test("cascade: a cloud tier with a missing provider escalates", async () =>
     clouds: [],
   });
   assertEquals(answer, "ollama tier answer");
-  assert(fx.logs.some((l) => l.includes("local1 needs mistral")));
+  assert(fx.logs.some((l) => l.includes("local1 (mistral-small-latest) needs mistral")));
 });
 
 Deno.test("cascade: cloud tiers in the list are served by their provider", async () => {
@@ -562,7 +562,7 @@ Deno.test("cascade: cloud tiers in the list are served by their provider", async
   });
   assertEquals(answer, "cloud tier answer");
   assertEquals(calls, ["improved/mistral-small-latest"]);
-  assert(fx.logs.some((l) => l.includes("local2 via mistral")));
+  assert(fx.logs.some((l) => l.includes("mistral-small-latest via mistral")));
   // No implicit trailing cloud: the user's list ends at the cloud model.
   assert(!fx.logs.some((l) => l.includes("cloud: mistral (answer is final")));
 });

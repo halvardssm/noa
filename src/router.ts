@@ -97,6 +97,17 @@ export async function cascade(
   const log = deps.onLog ?? (() => {});
   const clouds = deps.clouds ?? [];
   const localTiers = deps.localTiers ?? [];
+  const targets = deps.tierTargets ?? {};
+
+  // Logs show the model, not the positional tier name; a tier without a
+  // configured target (tests, legacy callers) falls back to its name.
+  const tierLabel = (tier: string): string => {
+    const target = targets[tier];
+    if (target === undefined) return tier;
+    return target.provider === undefined || target.provider === "ollama"
+      ? target.model
+      : `${target.model} via ${target.provider}`;
+  };
 
   // A forced model bypasses the judge, verification, and the cascade:
   // the raw question goes to exactly this model.
@@ -125,7 +136,7 @@ export async function cascade(
         );
       }
       chat = deps.chatFor(forced.tier);
-      label = forced.tier;
+      label = tierLabel(forced.tier);
     } else {
       if (deps.chatForModel === undefined) {
         throw new Error("direct model forcing is not available");
@@ -141,7 +152,6 @@ export async function cascade(
     return answer;
   }
 
-  const targets = deps.tierTargets ?? {};
   const ollamaTiers = localTiers.filter((tier) =>
     targets[tier] === undefined || targets[tier].provider === "ollama"
   );
@@ -190,8 +200,11 @@ export async function cascade(
       };
     }
   }
+  const judgedModel = targets[judgment.tier] !== undefined
+    ? ` model=${targets[judgment.tier].model}`
+    : "";
   log(
-    `judge: tier=${judgment.tier} reason=${judgment.reason || "(none)"} improved="${judgment.improvedPrompt}"`,
+    `judge: tier=${judgment.tier}${judgedModel} reason=${judgment.reason || "(none)"} improved="${judgment.improvedPrompt}"`,
   );
 
   // The implicit final cloud tier only exists when no configured tier is a
@@ -219,24 +232,24 @@ export async function cascade(
       const provider = clouds.find((p) => p.name === target.provider);
       if (provider === undefined) {
         log(
-          `tier: ${tier} needs ${target.provider}, which is not configured — escalating`,
+          `tier: ${tier} (${target.model}) needs ${target.provider}, which is not configured — escalating`,
         );
         continue;
       }
-      log(`tier: ${tier} via ${target.provider} ${target.model} (attempting)`);
+      log(`tier: ${tierLabel(tier)} (attempting)`);
       try {
         answer = await provider.chat(judgment.improvedPrompt, target.model);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        log(`tier: ${tier} failed (${message}) — escalating`);
+        log(`tier: ${tierLabel(tier)} failed (${message}) — escalating`);
         continue;
       }
     } else {
-      log(`tier: ${tier} (attempting)`);
+      log(`tier: ${tierLabel(tier)} (attempting)`);
       try {
         answer = await agentLoop(
           judgment.improvedPrompt,
-          tier,
+          tierLabel(tier),
           deps.chatFor(tier),
           deps,
           log,
@@ -251,7 +264,7 @@ export async function cascade(
       }
     }
     if (answer === "") {
-      log(`tier: ${tier} produced no answer (escalating)`);
+      log(`tier: ${tierLabel(tier)} produced no answer (escalating)`);
       continue;
     }
     if (!verifying) return answer;
