@@ -7,14 +7,12 @@ import {
 } from "./config.ts";
 import type { FetchFn } from "./http.ts";
 
-/** Interactive pieces of setup, injectable for tests. */
+/** Interactive pieces of setup, injectable for tests; all synchronous. */
 export interface SetupInteract {
   /** A yes/no question; `false` skips the step. */
-  confirm(message: string): Promise<boolean>;
-  /** Hidden input, e.g. for API keys. */
-  secret(message: string): Promise<string | null>;
-  /** Visible free-text input, e.g. for model lists and descriptions. */
-  text(message: string): Promise<string>;
+  confirm(message: string): boolean;
+  /** Visible free-text input, e.g. model lists and descriptions. */
+  text(message: string): string | null;
 }
 
 /** Everything setup needs, injected for tests. */
@@ -102,7 +100,7 @@ export async function runSetup(options: SetupOptions): Promise<number> {
   }
   out(`Ollama is up at ${baseUrl}`);
 
-  const useDefault = await options.interact.confirm(
+  const useDefault = options.interact.confirm(
     "Use the default model setup (ministral-3 cascade)?",
   );
   const models = useDefault
@@ -128,7 +126,7 @@ export async function runSetup(options: SetupOptions): Promise<number> {
     const profile = profilePathFor(options.env.get("SHELL"), home);
     const message =
       `Persist the memory cap in ${profile} (export OLLAMA_MAX_LOADED_MODELS=2, OLLAMA_KEEP_ALIVE=5m)? Restart Ollama afterwards for it to apply.`;
-    if (await options.interact.confirm(message)) {
+    if (options.interact.confirm(message)) {
       let text = "";
       try {
         text = await Deno.readTextFile(profile);
@@ -185,7 +183,7 @@ async function defaultSetup(
   );
   if (candidates.length > 0) {
     out(
-      `downloading the models this system can handle: ${
+      `the models this system can handle: ${
         candidates.map((s) => `${s.entry.model} (${s.sizeGb})`).join(", ")
       }`,
     );
@@ -198,16 +196,24 @@ async function defaultSetup(
     );
   }
 
-  const pulled: ModelEntry[] = [];
+  if (candidates.length === 0) {
+    out("this system cannot comfortably run any default model");
+    return [];
+  }
+
+  // One confirmation for the whole set; the user already chose the default
+  // cascade. Declining only skips the downloads — the cascade is still
+  // configured, and already-pulled models just verify quickly.
+  const confirmed = options.interact.confirm(
+    `Download all of them? (already-pulled models verify quickly)`,
+  );
+  if (!confirmed) {
+    out(
+      "skipped downloads — the default cascade is configured; pull later with `ollama pull <model>`",
+    );
+    return candidates.map((spec) => spec.entry);
+  }
   for (const spec of candidates) {
-    if (
-      !await options.interact.confirm(
-        `Pull ${spec.entry.model} (${spec.sizeGb})?`,
-      )
-    ) {
-      out(`skipped ${spec.entry.model}`);
-      continue;
-    }
     try {
       await pullModel(spec.entry.model, fetchFn, baseUrl, out);
     } catch (error) {
@@ -218,9 +224,8 @@ async function defaultSetup(
       );
       return null;
     }
-    pulled.push(spec.entry);
   }
-  return pulled;
+  return candidates.map((spec) => spec.entry);
 }
 
 /** The custom setup: an ordered list, then a description per model. */
@@ -231,9 +236,9 @@ async function customSetup(
   const fetchFn = options.fetchFn ?? fetch;
   const baseUrl = options.baseUrl ?? ollamaBaseUrl();
 
-  const list = await options.interact.text(
+  const list = options.interact.text(
     "Models for noa to download and use, smallest to largest, comma-separated:",
-  );
+  ) ?? "";
   const tags = list.split(",").map((tag) => tag.trim()).filter((tag) =>
     tag !== ""
   );
@@ -248,16 +253,16 @@ async function customSetup(
 
   const models: ModelEntry[] = [];
   for (const tag of tags) {
-    const description = await options.interact.text(
+    const description = options.interact.text(
       `What is ${tag} for? (one short line for routing; empty to skip):`,
-    );
+    ) ?? "";
     models.push({
       model: tag,
       ...(description !== "" ? { description } : {}),
     });
   }
 
-  const confirmed = await options.interact.confirm(
+  const confirmed = options.interact.confirm(
     `Download ${models.length} model(s) (${tags.join(", ")})?`,
   );
   if (!confirmed) {

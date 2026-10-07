@@ -35,14 +35,12 @@ async function readLine(): Promise<string | null> {
 
 /** Terminal-backed setup interaction. */
 const terminalInteract: SetupInteract = {
-  confirm: async (message) => {
-    const answer = await promptSecret(`${message} [y/N]`) ?? "";
+  confirm: (message) => {
+    const answer = prompt(`${message} [y/N]`) ?? "";
     return /^(y|yes)$/i.test(answer.trim());
   },
-  secret: async (message) => promptSecret(message),
-  text: async (message) => {
-    console.error(message);
-    return await readLine() ?? "";
+  text: (message) => {
+    return prompt(message);
   },
 };
 
@@ -164,7 +162,10 @@ const questionOptions = {
     type: "string" as const,
     description: "allowed paths for this session (replaces defaults)",
   },
-  noVerify: { type: "boolean" as const, description: "skip the verification pass" },
+  noVerify: {
+    type: "boolean" as const,
+    description: "skip the verification pass",
+  },
   debug: {
     type: "boolean" as const,
     description:

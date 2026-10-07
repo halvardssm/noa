@@ -7,7 +7,7 @@ import {
   type SetupInteract,
 } from "../src/setup.ts";
 import type { FetchFn, ResponseLike } from "../src/http.ts";
-import { loadConfig } from "../src/config.ts";
+import { DEFAULT_MODELS, loadConfig } from "../src/config.ts";
 
 function ok(body: unknown = {}): ResponseLike {
   return { ok: true, status: 200, json: () => Promise.resolve(body) };
@@ -55,35 +55,26 @@ Deno.test("defaultModelsFor: the systems check filters by RAM", () => {
 
 interface Scripted {
   confirms?: boolean[];
-  secrets?: string[];
   texts?: string[];
 }
 function fakeInteract(script: Scripted = {}): SetupInteract & {
   confirms: string[];
-  secrets: string[];
   texts: string[];
 } {
   const confirms: string[] = [];
-  const secrets: string[] = [];
   const texts: string[] = [];
   let ci = 0;
-  let si = 0;
   let ti = 0;
   return {
     confirms,
-    secrets,
     texts,
     confirm: (message) => {
       confirms.push(message);
-      return Promise.resolve(script.confirms?.[ci++] ?? false);
-    },
-    secret: (message) => {
-      secrets.push(message);
-      return Promise.resolve(script.secrets?.[si++] ?? null);
+      return script.confirms?.[ci++] ?? false;
     },
     text: (message) => {
       texts.push(message);
-      return Promise.resolve(script.texts?.[ti++] ?? "");
+      return script.texts?.[ti++] ?? "";
     },
   };
 }
@@ -126,8 +117,7 @@ Deno.test("setup: default path pulls what the systems check allows", async () =>
   await withDirs(async (home, config) => {
     const pulled: string[] = [];
     const interact = fakeInteract({
-      confirms: [true, true, true, true, true],
-      secrets: [],
+      confirms: [true, true, true],
     });
     const lines: string[] = [];
     const result = await runSetup({
@@ -140,7 +130,8 @@ Deno.test("setup: default path pulls what the systems check allows", async () =>
     });
     assertEquals(result, 0);
     assert(lines.some((l) => l.includes("GB of RAM")));
-    assert(lines.some((l) => l.includes("downloading the models this system can handle")));
+    assert(lines.some((l) => l.includes("the models this system can handle")));
+    assert(interact.confirms.some((c) => c.includes("Download all of them?")));
     assert(lines.some((l) => l.includes("ministral-3:14b")));
     assertEquals(pulled, ["ministral-3:3b", "ministral-3:8b", "ministral-3:14b"]);
     const saved = await loadConfig(config);
@@ -181,7 +172,6 @@ Deno.test("setup: custom path asks for an ordered list and descriptions", async 
     const interact = fakeInteract({
       confirms: [false, true],
       texts: ["qwen3:4b, llama3.1:8b", "chat and trivia", "code questions"],
-      secrets: [],
     });
     const lines: string[] = [];
     const result = await runSetup({
@@ -221,7 +211,6 @@ Deno.test("setup: never prompts for keys, prints the environment hint", async ()
       ...ollamaFetch(pulled),
     });
     assertEquals(result, 0);
-    assertEquals(interact.secrets.length, 0, "no key prompts at all");
     assert(lines.some((l) => l.includes("export MISTRAL_API_KEY")));
     const saved = await Deno.readTextFile(config);
     assert(!saved.includes("API_KEY"));
@@ -242,10 +231,11 @@ Deno.test("setup: still no key prompting when the config already exists", async 
       ...ollamaFetch(pulled),
     });
     assertEquals(result, 0);
-    assertEquals(interact.secrets.length, 0);
+    assertEquals(pulled, [], "declined downloads pull nothing");
     const saved = await loadConfig(config);
     assertEquals(saved.ZODIAC, "leo");
-    assertEquals(saved.models, []);
+    // Declining downloads still configures the default cascade.
+    assertEquals(saved.models, [...DEFAULT_MODELS]);
   });
 });
 
