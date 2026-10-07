@@ -163,7 +163,6 @@ const root = defineCommand({
       description: "allowed paths for this invocation (replaces defaults)",
     },
     noVerify: { type: "boolean", description: "skip the verification pass" },
-    tools: { type: "boolean", description: "list permitted tools and exit" },
   },
   args: [{ name: "question", variadic: true, description: "your question" }],
   helpOnEmpty: true,
@@ -171,23 +170,6 @@ const root = defineCommand({
     const stderrLine = (message: string) => context.stderr(message);
     await ensureConfig(configPath(Deno.env), legacyEnvPath(Deno.env));
     const config = await loadConfig(configPath(Deno.env));
-
-    if (context.flags.tools) {
-      const app = await createApp({
-        env: Deno.env,
-        fileValues: config,
-        allowToolsFlag: context.flags.allowTools,
-        onLog: () => {},
-      });
-      if (app.allowTools.length === 0) {
-        context.stderr(
-          `no tools are allowed — pass --allow-tools or set NOA_TOOLS (example: --allow-tools ${SUGGESTED_TOOLS})`,
-        );
-        return;
-      }
-      context.stdout(app.allowTools.join("\n"));
-      return;
-    }
 
     const question = (context.args.question ?? []).join(" ").trim();
     if (question === "") {

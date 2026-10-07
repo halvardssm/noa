@@ -100,7 +100,6 @@ noa --allow-tools <cmd,...>     set the tool allowlist for this invocation (high
 noa --allow-paths <p,...>       set allowed paths for this invocation (highest precedence;
                                  replaces NOA_ALLOW_PATHS / config / default: the current directory)
 noa --no-verify <question>      skip the verification pass
-noa --tools                     list permitted tools
 ```
 
 Conventions: routing decisions/logs go to **stderr**; the answer (and only the answer) to **stdout**, so output is pipeable (`noa explain this | pbcopy`).
