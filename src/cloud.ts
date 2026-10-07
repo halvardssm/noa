@@ -1,4 +1,5 @@
 import type { FetchFn } from "./http.ts";
+import { dateContextLine } from "./context.ts";
 
 /**
  * A cloud provider (the cascade's final tier). Adding a provider is a
@@ -60,7 +61,10 @@ export async function mistralChat(options: MistralOptions): Promise<string> {
   const fetchFn = options.fetchFn ?? fetch;
   const body = {
     model: options.model ?? "mistral-large-latest",
-    messages: [{ role: "user", content: options.prompt }],
+    messages: [
+      { role: "system", content: dateContextLine() },
+      { role: "user", content: options.prompt },
+    ],
   };
   let response;
   try {
@@ -129,7 +133,10 @@ export async function anthropicChat(
   const body = {
     model: options.model ?? "claude-sonnet-4-5",
     max_tokens: 1024,
-    messages: [{ role: "user", content: options.prompt }],
+    messages: [
+      { role: "system", content: dateContextLine() },
+      { role: "user", content: options.prompt },
+    ],
   };
   let response;
   try {

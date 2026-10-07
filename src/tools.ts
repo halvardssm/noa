@@ -191,7 +191,9 @@ export async function createGate(settings: GateSettings): Promise<Gate> {
       const base = command.split("/").pop()!;
       if (!allowSet.has(base)) {
         log(`rejected: ${command} ${args.join(" ")} (not in the allowlist)`);
-        throw new GateError(`"${base}" is not in the allowlist`);
+        throw new GateError(
+          `"${base}" is not in the allowlist — no tools are configured; tell the user to pass --allow-tools <cmds> or set NOA_TOOLS in config.json`,
+        );
       }
       if (base === "curl") {
         const offender = screenCurlArgs(args);

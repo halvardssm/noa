@@ -242,6 +242,7 @@ const root = defineCommand({
   options: {
     prompt: {
       type: "string",
+      alias: "p",
       description: "your question — routed through the model cascade",
     },
     ...questionOptions,

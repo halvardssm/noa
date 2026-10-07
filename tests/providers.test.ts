@@ -130,7 +130,9 @@ Deno.test("mistral: sends the chat completion request with auth", async () => {
   assertEquals(headers.get("authorization"), "Bearer sk-test");
   const body = JSON.parse(calls[0].init.body as string);
   assertEquals(body.model, "mistral-large-latest");
-  assertEquals(body.messages, [{ role: "user", content: "improved prompt" }]);
+  assertEquals(body.messages[0].role, "system");
+  assert(body.messages[0].content.includes("Today's date"));
+  assertEquals(body.messages[1], { role: "user", content: "improved prompt" });
 });
 
 Deno.test("mistral: model is configurable", async () => {
@@ -181,7 +183,9 @@ Deno.test("anthropic: sends the messages request with the right headers", async 
   assertEquals(headers.get("anthropic-version"), "2023-06-01");
   const body = JSON.parse(calls[0].init.body as string);
   assertEquals(body.model, "claude-sonnet-4-5");
-  assertEquals(body.messages, [{ role: "user", content: "improved prompt" }]);
+  assertEquals(body.messages[0].role, "system");
+  assert(body.messages[0].content.includes("Today's date"));
+  assertEquals(body.messages[1], { role: "user", content: "improved prompt" });
 });
 
 Deno.test("anthropic: missing key fails before any request", async () => {

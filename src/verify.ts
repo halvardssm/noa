@@ -1,5 +1,6 @@
 import type { ChatFn } from "./router.ts";
 import { extractJson } from "./judge.ts";
+import { dateContextLine } from "./context.ts";
 
 /** The conservative verdict of the cheap verification pass. */
 export interface Verdict {
@@ -9,7 +10,7 @@ export interface Verdict {
 
 const VERIFY_SYSTEM = `You verify that an answer is acceptable for a question.
 
-Be conservative: answer PASS unless the answer is CLEARLY deficient — wrong, incomplete for what was asked, or off-question. The answer satisfies the question when it contains the requested information; differences in wording, format, style, or brevity are not deficiencies. If the user asked to run a command and the answer shows that command's output, that passes. Uncertainty passes.
+Be conservative: answer PASS unless the answer is CLEARLY deficient — wrong, incomplete for what was asked, or off-question. The answer satisfies the question when it contains the requested information; differences in wording, format, style, or brevity are not deficiencies. If the user asked to run a command and the answer shows that command's output, that passes. Uncertainty passes. A refusal or "I cannot determine ..." when the question asks for concrete information IS deficient — the question remains unanswered — so that is a FAIL.
 
 Respond with ONLY a JSON object: {"verdict": "PASS" | "FAIL", "reason": "one short sentence"}`;
 
@@ -30,7 +31,10 @@ export async function verify(
 ): Promise<Verdict> {
   const result = await options.chat(
     [
-      { role: "system", content: options.system ?? VERIFY_SYSTEM },
+      {
+        role: "system",
+        content: `${options.system ?? VERIFY_SYSTEM}\n${dateContextLine()}`,
+      },
       {
         role: "user",
         content: `Question: ${question}\n\nAnswer:\n${answer}`,

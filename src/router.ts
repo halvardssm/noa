@@ -3,6 +3,7 @@ import type { CloudProvider } from "./cloud.ts";
 import type { RunResult } from "./tools.ts";
 import { judge, type Judgment, type Tier, type TierInfo } from "./judge.ts";
 import { verify } from "./verify.ts";
+import { dateContextLine } from "./context.ts";
 
 /** A chat function bound to a model, with JSON mode and tool support. */
 export type ChatFn = (
@@ -259,7 +260,7 @@ export async function cascade(
         if (message.includes("Ollama is not running")) throw error;
         // A broken tier (model missing, HTTP error) escalates rather than
         // crashing the whole request.
-        log(`tier: ${tier} failed (${message}) — escalating`);
+        log(`tier: ${tierLabel(tier)} failed (${message}) — escalating`);
         continue;
       }
     }
@@ -335,7 +336,7 @@ async function agentLoop(
 ): Promise<string> {
   const maxRounds = deps.maxToolRounds ?? 6;
   const messages: ChatMessage[] = [
-    { role: "system", content: AGENT_SYSTEM },
+    { role: "system", content: `${AGENT_SYSTEM}\n${dateContextLine()}` },
     { role: "user", content: prompt },
   ];
   for (let round = 0; round < maxRounds; round++) {
