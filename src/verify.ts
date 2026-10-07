@@ -1,6 +1,5 @@
 import type { ChatFn } from "./router.ts";
 import { extractJson } from "./judge.ts";
-import { dateContextLine } from "./context.ts";
 
 /** The conservative verdict of the cheap verification pass. */
 export interface Verdict {
@@ -31,10 +30,7 @@ export async function verify(
 ): Promise<Verdict> {
   const result = await options.chat(
     [
-      {
-        role: "system",
-        content: `${options.system ?? VERIFY_SYSTEM}\n${dateContextLine()}`,
-      },
+      { role: "system", content: options.system ?? VERIFY_SYSTEM },
       {
         role: "user",
         content: `Question: ${question}\n\nAnswer:\n${answer}`,

@@ -3,7 +3,6 @@ import type { CloudProvider } from "./cloud.ts";
 import type { RunResult } from "./tools.ts";
 import { judge, type Judgment, type Tier, type TierInfo } from "./judge.ts";
 import { verify } from "./verify.ts";
-import { dateContextLine } from "./context.ts";
 
 /** A chat function bound to a model, with JSON mode and tool support. */
 export type ChatFn = (
@@ -336,7 +335,7 @@ async function agentLoop(
 ): Promise<string> {
   const maxRounds = deps.maxToolRounds ?? 6;
   const messages: ChatMessage[] = [
-    { role: "system", content: `${AGENT_SYSTEM}\n${dateContextLine()}` },
+    { role: "system", content: AGENT_SYSTEM },
     { role: "user", content: prompt },
   ];
   for (let round = 0; round < maxRounds; round++) {

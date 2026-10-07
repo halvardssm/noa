@@ -157,7 +157,7 @@ Deno.test("app: forced mistral receives the raw question (no upgrade steps)", as
   const prompts: string[] = [];
   const fetchFn: FetchFn = async (url, init) => {
     if (String(url).includes("mistral.ai")) {
-      prompts.push(JSON.parse((init as RequestInit).body as string).messages[1].content);
+      prompts.push(JSON.parse((init as RequestInit).body as string).messages[0].content);
       return jsonResponse({ choices: [{ message: { content: "cloud answer" } }] });
     }
     const body = JSON.parse((init as RequestInit).body as string);
@@ -238,7 +238,7 @@ Deno.test("app: with an explicit empty models list, the raw question goes to clo
   const prompts: string[] = [];
   const fetchFn: FetchFn = async (url, init) => {
     if (String(url).includes("mistral.ai")) {
-      prompts.push(JSON.parse((init as RequestInit).body as string).messages[1].content);
+      prompts.push(JSON.parse((init as RequestInit).body as string).messages[0].content);
       return jsonResponse({ choices: [{ message: { content: "cloud" } }] });
     }
     throw new Error("no ollama call expected");
@@ -291,7 +291,7 @@ Deno.test("app: cloud order follows NOA_CLOUD with only configured providers", a
   const prompts: string[] = [];
   const fetchFn: FetchFn = async (url, init) => {
     if (String(url).includes("anthropic.com")) {
-      prompts.push(JSON.parse((init as RequestInit).body as string).messages[1].content);
+      prompts.push(JSON.parse((init as RequestInit).body as string).messages[0].content);
       return jsonResponse({ content: [{ type: "text", text: "anthropic" }] });
     }
     if (String(url).includes("mistral.ai")) {
@@ -450,29 +450,3 @@ Deno.test("app: an unknown provider is rejected", async () => {
   );
 });
 
-Deno.test("app: the date context reaches local models and the verifier", async () => {
-  const systems: string[] = [];
-  const fetchFn: FetchFn = async (_url, init) => {
-    const body = JSON.parse((init as RequestInit).body as string);
-    systems.push(body.messages[0].content);
-    const user = body.messages?.[body.messages.length - 1]?.content ?? "";
-    if (body.format === "json" && user.startsWith("Question:")) {
-      return ollamaBody(VERIFY_PASS);
-    }
-    if (body.format === "json") {
-      return ollamaBody(
-        JSON.stringify({ tier: "local1", reason: "x", improved_prompt: "p" }),
-      );
-    }
-    return ollamaBody("local answer");
-  };
-  const app = await createApp({
-    env: envWith({}),
-    fileValues: {},
-    onLog: () => {},
-    fetchFn,
-  });
-  await app.ask("what is today's date?");
-  const today = new Date().toLocaleDateString("en-CA");
-  assert(systems.every((s) => s.includes(today)), "every system prompt carries today's date");
-});

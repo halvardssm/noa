@@ -1,5 +1,4 @@
 import type { ChatFn } from "./router.ts";
-import { dateContextLine } from "./context.ts";
 
 /** A tier name; positional (`local1`..`localN`) or `cloud`. */
 export type Tier = string;
@@ -62,7 +61,7 @@ export async function judge(
     [
       {
         role: "system",
-        content: `${options.system ?? judgeSystemPrompt(options.tiers)}\n${dateContextLine()}`,
+        content: options.system ?? judgeSystemPrompt(options.tiers),
       },
       { role: "user", content: question },
     ],
