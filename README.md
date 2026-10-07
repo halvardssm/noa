@@ -106,9 +106,11 @@ noa --prompt <q> --allow-paths <p,...>
                                  set allowed paths for this invocation (highest precedence;
                                  replaces NOA_ALLOW_PATHS / config / default: the current directory)
 noa --prompt <q> --no-verify    skip the verification pass
+noa --prompt <q> --debug        show routing decisions, tool runs, and
+                                 verification on stderr
 ```
 
-Conventions: routing decisions/logs go to **stderr**; the answer (and only the answer) to **stdout**, so output is pipeable (`noa --prompt "explain this" | pbcopy`).
+Conventions: the answer (and only the answer) goes to **stdout**, so output is pipeable (`noa --prompt "explain this" | pbcopy`). Routing decisions, tool runs, verification verdicts, and hints are silent by default and appear on **stderr only with `--debug`**; errors always print to stderr.
 
 `noa setup` first asks for **default or custom** models. Default runs a **systems check** (total RAM via `Deno.systemMemoryInfo`) and downloads only what the system can handle — 3b from 6GB, 8b from 12GB, 14b from 24GB — printing a note of what it downloads and what it skips (needs more RAM); the chosen subset is written to `config.json` so the cascade matches what is installed. Custom asks for an ordered, comma-separated model list (smallest to largest), then a one-line description of each model individually (the judge reads these descriptions to route), then pulls them. Everything runs behind explicit prompts, over the Ollama HTTP API only — noa never spawns anything (rule 6). Setup also persists `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile behind a prompt, and ends with a reminder to export `MISTRAL_API_KEY`/`ANTHROPIC_API_KEY` — keys are never stored (rule 8). Setup refuses non-interactive stdin with instructions; the compiled binary may exclude steps via its permission flags.
 
@@ -160,7 +162,7 @@ The repo is done when all of these hold:
 
 **Routing**
 
-- [x] `noa --prompt "what is 2+2"` answers locally on the 3B, in seconds, with stderr showing the tier chosen
+- [x] `noa --prompt "what is 2+2" --debug` answers locally on the 3B, in seconds, with stderr showing the model chosen (silent without --debug)
 - [ ] A moderate code question routes to 8B; a demanding one routes to 14B
 - [ ] A genuinely hard task cascades upward and, if all local tiers fail verification, reaches Claude or Mistral with the improved (rewritten) prompt — visible in stderr
 - [ ] `--provider anthropic` forces cloud and works (code paths unit-tested; needs a live key for full confirmation)

@@ -165,6 +165,11 @@ const questionOptions = {
     description: "allowed paths for this session (replaces defaults)",
   },
   noVerify: { type: "boolean" as const, description: "skip the verification pass" },
+  debug: {
+    type: "boolean" as const,
+    description:
+      "log routing decisions, tool runs, verification, and hints to stderr",
+  },
 };
 
 /**
@@ -180,12 +185,14 @@ async function runRepl(
     allowTools?: string;
     allowPaths?: string;
     noVerify?: boolean;
+    debug?: boolean;
   },
   stderrLine: (message: string) => void,
   stdout: (line: string) => void,
 ): Promise<number> {
   await ensureConfig(configPath(Deno.env), legacyEnvPath(Deno.env));
   const config = await loadConfig(configPath(Deno.env));
+  const debugLog = flags.debug === true ? stderrLine : () => {};
   const app = await createApp({
     env: Deno.env,
     fileValues: config,
@@ -195,7 +202,7 @@ async function runRepl(
     provider: flags.provider,
     noVerify: flags.noVerify,
     approveRm: interactiveRmApproval,
-    onLog: stderrLine,
+    onLog: debugLog,
   });
   stderrLine("noa repl — one question per line; exit or Ctrl-D to quit");
   const prompt = new TextEncoder().encode("> ");
@@ -261,7 +268,7 @@ const root = defineCommand({
       provider: context.flags.provider,
       noVerify: context.flags.noVerify,
       approveRm: interactiveRmApproval,
-      onLog: stderrLine,
+      onLog: context.flags.debug === true ? stderrLine : () => {},
     });
     const answer = await app.ask(question);
     context.stdout(answer);

@@ -159,3 +159,29 @@ Deno.test("cli: noa repl quits on exit/quit", async () => {
   const slashExit = await runCli(["repl"], {}, "/exit\n");
   assertEquals(slashExit.code, 0);
 });
+
+Deno.test("cli: routing logs only appear with --debug", async () => {
+  await withHome(async (home) => {
+    // A legacy key in the config produces a log-channel warning; without
+    // --debug it is suppressed, with --debug it is shown. The dead daemon
+    // produces a real error on stderr either way.
+    await Deno.mkdir(home, { recursive: true });
+    await Deno.writeTextFile(
+      `${home}/config.json`,
+      '{"MISTRAL_API_KEY": "legacy", "ZODIAC": "leo"}',
+    );
+    const quiet = await runCli(
+      ["--prompt", "hi"],
+      { NOA_HOME: home, OLLAMA_HOST: "http://localhost:1" },
+    );
+    assert(quiet.stderr.includes("Ollama is not running"));
+    assert(!quiet.stderr.includes("is ignored"), "logs suppressed without --debug");
+
+    const loud = await runCli(
+      ["--prompt", "hi", "--debug"],
+      { NOA_HOME: home, OLLAMA_HOST: "http://localhost:1" },
+    );
+    assert(loud.stderr.includes("Ollama is not running"));
+    assert(loud.stderr.includes("is ignored"), "logs shown with --debug");
+  });
+});
