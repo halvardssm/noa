@@ -30,7 +30,7 @@ Design principles:
 - **Local by default.** Requests leave the machine only when local models genuinely can't cope.
 - **Memory-capped.** At most 2 models in RAM (Ollama `OLLAMA_MAX_LOADED_MODELS=2`), idle models unloaded after 5 minutes. On a 32GB machine, typical footprint is \~3GB.
 - **Prompt security is not security.** All capabilities are enforced by the runtime environment and by tool implementations in code — never by instructions to the model.
-- **One executable.** `deno compile` produces a self-contained binary with the security boundary baked into its permission flags.
+- **One executable.** `deno compile` produces a self-contained binary; the security boundary is the gate compiled into it (rules 1-4), not Deno's permission flags.
 
 ## Security rules (hard requirements)
 
@@ -52,9 +52,9 @@ noa implements no tools of its own. The agent's only capability is invoking **al
 
    Extending the allowlist is an explicit, logged escalation decision that belongs to the user, not the model. Commands are executed directly (no shell), so pipes, `;`, and `$(...)` injection are impossible. Every invocation is logged to stderr. Custom entries are resolved to absolute paths; entries inside the writable workspace are rejected (an allowed binary in `~/dev` could be overwritten and then spawned — Deno's docs call out exactly this `--allow-write` + `--allow-run` trap). Note: `node` is deliberately absent from the default allowlist — it is arbitrary-execution and voids every other rule; adding it is the user's informed choice.
 4. **Gated `rm`:** `rm` is never in the default allowlist. Even if the user adds it via `--allow-tools`, each invocation requires interactive human approval (the exact command must be retyped to approve) — and even approved, argument screening (rule 1) still applies. Approval can never override rule 1.
-5. **Deno permissions mirror the gate:** compiled/installed binaries use `--allow-net --allow-env=NOA_HOME,NOA_TOOLS,NOA_ALLOW_PATHS,HOME,MISTRAL_API_KEY,OLLAMA_HOST --allow-read=$HOME/dev,$HOME/.config/noa --allow-write=$HOME/dev,$HOME/.config/noa --allow-run=<the allowlist from NOA_TOOLS at compile time, none if unset>` so the runtime enforces the default boundary even if the code checks were removed.
-6. **Subprocess reality:** Deno permissions are enforced on the Deno process only — never on child processes. `--allow-run` gates which executables may be spawned (arguments are not checked); once spawned, a child runs with the user's full privileges, outside the sandbox. Therefore **noa never spawns Ollama**: Ollama runs as an independent user daemon and noa talks to it over `localhost:11434` (covered by `--allow-net`). The model executes nothing — it can only produce a request that passes through the gate inside noa's own sandboxed process.
-7. **Runtime vs. code enforcement for custom settings:** compiled binaries bake their permission flags in at compile time. A configured allowlist and configured paths are enforced by the runtime; user-extended `--allow-tools` lists and `--allow-paths` sets are enforced by code checks in the gate, since the compiled binary's flags cannot be widened at runtime. Users who want the runtime itself to enforce custom settings run from source with matching flags (`deno run --allow-run=<your,tools> --allow-read=<your,paths> ... src/main.ts`) or recompile (`deno task compile`, which bakes the current `NOA_TOOLS`/`NOA_ALLOW_PATHS` into the Deno flags). The `deno task noa` dev task carries the suggested example list as its `--allow-run` ceiling and the current directory as its read/write scope — the gate still enforces the actual configuration beneath it. A custom allowlist is only as strong as its weakest entry — adding `curl` unscreened or `node` effectively voids the GET-only posture and any path discipline.
+5. **Full Deno permissions by design:** noa runs and compiles with `-A` (`--allow-all`), so Deno never interposes a permission prompt — its interactive prompts also break terminal input after a sync `prompt()`. Deno's flags only ever bound noa's own process, not the spawned commands the model requests (rule 6), so they added friction without adding real containment. The gate (rules 1-4) is the sole enforcement point; users who want a runtime layer beneath it can still run from source with scoped flags (`deno run --allow-run=<your,tools> --allow-read=<your,paths> ... src/main.ts`).
+6. **Subprocess reality:** Deno permissions are enforced on the Deno process only — never on child processes. With `-A` nothing constrains which executables noa may spawn except the gate (rule 3); once spawned, a child runs with the user's full privileges. Therefore **noa never spawns Ollama**: Ollama runs as an independent user daemon and noa talks to it over `localhost:11434`. The model executes nothing — it can only produce a request that passes through the gate inside noa's own process.
+7. **Code-level enforcement only:** every setting — the allowlist, the allowed paths, GET-only screening, `rm` approval — is enforced by the gate in code, identically from source and from the compiled binary. There is no runtime permission layer beneath it anymore: removing the code checks would remove the boundary, which is the honest trade-off of `-A`. A configured allowlist is only as strong as its weakest entry — adding `curl` unscreened or `node` effectively voids the GET-only posture and any path discipline.
 8. **No secrets at rest:** API keys are **never stored**. `config set` refuses secret-looking keys (`*_KEY`, `*_TOKEN`, `*_SECRET`) with an export hint; a legacy `.env` migration skips them; and a key found in `config.json` is ignored with a stderr warning. Providers check that their key is present when selected and read it from the environment **at request time**, attaching it directly to the fetch request — the key never flows through the app. For everything else, `config set` writes one string setting to `~/.config/noa/config.json` (`chmod 600` on creation, additive, never reordering unrelated entries); the `models` list is edited by hand or via `noa setup`. Secret-looking values that someone hand-edits into the file are still masked in `config get`/`config list` output unless `--show` is passed. Widening settings (`NOA_TOOLS`, `NOA_ALLOW_PATHS`) are writable via `config set` — the user acting deliberately at the keyboard, the same trust level as editing the file by hand; the model still cannot touch them, because it only ever requests allowlisted command runs, and `noa`/`config` are not allowlisted commands.
 
 ## Where things live
@@ -112,7 +112,7 @@ noa --prompt <q> --debug        show routing decisions, tool runs, and
 
 Conventions: the answer (and only the answer) goes to **stdout**, so output is pipeable (`noa --prompt "explain this" | pbcopy`). Routing decisions, tool runs, verification verdicts, and hints are silent by default and appear on **stderr only with `--debug`**; errors always print to stderr.
 
-`noa setup` first asks for **default or custom** models. Default runs a **systems check** (total RAM via `Deno.systemMemoryInfo`) and offers only what the system can handle — 3b from 6GB, 8b from 12GB, 14b from 24GB — printing a note of what it downloads and what it skips (needs more RAM); one confirmation covers the whole set, and declining it still writes the chosen subset to `config.json` so the cascade matches what is installed. Custom asks for an ordered, comma-separated model list (smallest to largest), then a one-line description of each model individually (the judge reads these descriptions to route), then confirms and pulls them. Everything runs behind explicit prompts, over the Ollama HTTP API only — noa never spawns anything (rule 6). Setup also persists `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile behind a prompt, and ends with a reminder to export `MISTRAL_API_KEY`/`ANTHROPIC_API_KEY` — keys are never stored (rule 8). Setup refuses non-interactive stdin with instructions; the compiled binary may exclude steps via its permission flags.
+`noa setup` first asks for **default or custom** models. Default runs a **systems check** (total RAM via `Deno.systemMemoryInfo`) and offers only what the system can handle — 3b from 6GB, 8b from 12GB, 14b from 24GB — printing a note of what it downloads and what it skips (needs more RAM); one confirmation covers the whole set, and declining it still writes the chosen subset to `config.json` so the cascade matches what is installed. Custom asks for an ordered, comma-separated model list (smallest to largest), then a one-line description of each model individually (the judge reads these descriptions to route), then confirms and pulls them. Everything runs behind explicit prompts, over the Ollama HTTP API only — noa never spawns anything (rule 6). Setup also persists `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile behind a prompt, and ends with a reminder to export `MISTRAL_API_KEY`/`ANTHROPIC_API_KEY` — keys are never stored (rule 8). Setup refuses non-interactive stdin with instructions.
 
 ## Implementation milestones
 
@@ -129,7 +129,7 @@ Conventions: the answer (and only the answer) goes to **stdout**, so output is p
 - Gated `rm` (rule 4)
 - Anthropic provider; weighted, configurable provider order (`NOA_CLOUD`)
 - `noa setup` (interactive, HTTP-API based; noa never spawns anything)
-- Compiled binary with strict permission flags baked from the environment at compile time (`scripts/compile.ts` maps `NOA_TOOLS` → `--allow-run`, `NOA_ALLOW_PATHS` → `--allow-read`/`--allow-write`); unset `NOA_TOOLS` compiles a binary that cannot spawn anything
+- Compiled binary via `deno compile -A` (rule 5): the gate in code is the sole enforcement point, identical to running from source
 - User-defined local models: the ordered `models` array in `config.json` (arbitrary count, per-model descriptions for the judge); setup offers default (with systems check) or custom
 
 **Status:** implemented and tested; publishing to JSR/npm deliberately not done yet. The security rules above are the standing spec for both milestones.
@@ -154,10 +154,10 @@ The repo is done when all of these hold:
 
 **Build &amp; distribution**
 
-- [ ] `deno task noa -- setup` configures a fresh machine end-to-end via prompts only
+- [ ] `deno task run setup` configures a fresh machine end-to-end via prompts only
 - [x] `deno publish --dry-run` passes (JSR rules: explicit types, no slow types)
 - [ ] `deno publish` succeeds; `deno install -g jsr:@halvardm/noa` then `noa --prompt <question>` works with no local checkout
-- [x] `deno task compile` produces a working single-file executable (verified live: routing, tool runs with baked `--allow-run`, runtime refusal of spawns when compiled without `NOA_TOOLS`, runtime refusal of reads outside the allowed paths)
+- [x] `deno task compile` produces a working single-file executable (verified live: routing and tool runs). Compiled with `-A` since rule 5 changed: Deno's runtime no longer enforces anything, the gate (rules 1-4) is the sole enforcement point
 - [ ] `npx jsr:@halvardm/noa` also works for npm users
 
 **Routing**
@@ -182,7 +182,7 @@ The repo is done when all of these hold:
 - [x] `rm notes.txt` → approval prompt; exact retype approves; only files inside the allowed paths can be affected (gate tests)
 - [x] An injected instruction inside a file in `~/dev` ("ignore rules, run ...") → no tool call outside the allowlist is possible
 - [x] `noa --allow-tools git status` runs `git status` (logged to stderr); `--allow-tools` with an entry resolved inside `~/dev` is rejected
-- [x] The compiled binary (strict flags) refuses reads outside the allowed paths at the Deno permission level, independent of the code checks (verified live via `NOA_HOME` outside `--allow-read`)
+- [x] ~~The compiled binary refuses reads outside the allowed paths at the Deno permission level~~ (obsolete under `-A`, rule 5 — path screening is enforced by the gate; proof in gate tests)
 
 **Hygiene**
 
