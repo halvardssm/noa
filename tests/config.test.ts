@@ -14,23 +14,13 @@ import {
   unsetConfigValue,
 } from "../src/config.ts";
 
-Deno.test("resolveList: flag wins over env, file, and defaults", () => {
+Deno.test("resolveList: flag wins over file and defaults", () => {
   const list = resolveList({
     flag: "~/work/src",
-    env: "~/work",
     file: "~/dev,~/work",
     defaults: ["~/dev"],
   });
   assertEquals(list, ["~/work/src"]);
-});
-
-Deno.test("resolveList: env wins over file when flag is absent", () => {
-  const list = resolveList({
-    env: "~/work",
-    file: "~/dev,~/work",
-    defaults: ["~/dev"],
-  });
-  assertEquals(list, ["~/work"]);
 });
 
 Deno.test("resolveList: file wins over defaults when env is absent", () => {

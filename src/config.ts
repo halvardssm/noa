@@ -221,13 +221,11 @@ export async function unsetConfigValue(
 /**
  * Sources for a list setting, most specific first. Each level fully
  * replaces the one below (security rules 1 and 3):
- * CLI flag > process env var > config file value > built-in default.
+ * CLI flag > config file value > built-in default.
  */
 export interface ListSources {
   /** Raw comma-separated value from the CLI flag, if given. */
   readonly flag?: string;
-  /** Raw value from the process environment, if set. */
-  readonly env?: string;
   /** Raw value from the config file, if set. */
   readonly file?: string;
   /** Built-in defaults, used when nothing above is present. */
@@ -236,8 +234,7 @@ export interface ListSources {
 
 /** Resolves a list setting by precedence, trimming and deduplicating. */
 export function resolveList(sources: ListSources): string[] {
-  const raw = sources.flag ?? sources.env ?? sources.file ??
-    sources.defaults.join(",");
+  const raw = sources.flag ?? sources.file ?? sources.defaults.join(",");
   const seen = new Set<string>();
   const list: string[] = [];
   for (const entry of raw.split(",")) {

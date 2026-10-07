@@ -94,16 +94,13 @@ export async function createApp(options: AppOptions): Promise<App> {
   const cwd = options.cwd ?? Deno.cwd();
   const allowTools = resolveList({
     flag: options.allowToolsFlag,
-    env: options.env.get("NOA_TOOLS"),
     file: stringSetting(options.fileValues, "NOA_TOOLS"),
     defaults: [],
   });
   const pathsConfigured = options.allowPathsFlag !== undefined ||
-    options.env.get("NOA_ALLOW_PATHS") !== undefined ||
     stringSetting(options.fileValues, "NOA_ALLOW_PATHS") !== undefined;
   const allowPaths = resolveList({
     flag: options.allowPathsFlag,
-    env: options.env.get("NOA_ALLOW_PATHS"),
     file: stringSetting(options.fileValues, "NOA_ALLOW_PATHS"),
     defaults: defaultAllowPaths(cwd),
   });
@@ -180,8 +177,8 @@ export async function createApp(options: AppOptions): Promise<App> {
   }
 
   /** Cloud providers in the user's preferred order (NOA_CLOUD). */
-  const cloudOrder = (options.env.get("NOA_CLOUD") ??
-    stringSetting(options.fileValues, "NOA_CLOUD") ?? "mistral,anthropic")
+  const cloudOrder = (stringSetting(options.fileValues, "NOA_CLOUD") ??
+    "mistral,anthropic")
     .split(",")
     .map((name) => name.trim())
     .filter((name) => name !== "");
@@ -190,8 +187,7 @@ export async function createApp(options: AppOptions): Promise<App> {
     if (name === "mistral" && hasKey(readSecret, "MISTRAL_API_KEY")) {
       clouds.push(
         mistralProvider({
-          model: options.env.get("NOA_MISTRAL_MODEL") ??
-            stringSetting(options.fileValues, "NOA_MISTRAL_MODEL"),
+          model: stringSetting(options.fileValues, "NOA_MISTRAL_MODEL"),
           fetchFn: options.fetchFn,
           readSecret,
         }),
@@ -199,8 +195,7 @@ export async function createApp(options: AppOptions): Promise<App> {
     } else if (name === "anthropic" && hasKey(readSecret, "ANTHROPIC_API_KEY")) {
       clouds.push(
         anthropicProvider({
-          model: options.env.get("NOA_ANTHROPIC_MODEL") ??
-            stringSetting(options.fileValues, "NOA_ANTHROPIC_MODEL"),
+          model: stringSetting(options.fileValues, "NOA_ANTHROPIC_MODEL"),
           fetchFn: options.fetchFn,
           readSecret,
         }),
@@ -221,10 +216,10 @@ export async function createApp(options: AppOptions): Promise<App> {
         fetchFn: options.fetchFn,
       });
 
-  const mistralModel = options.env.get("NOA_MISTRAL_MODEL") ??
+  const mistralModel =
     stringSetting(options.fileValues, "NOA_MISTRAL_MODEL") ??
     "mistral-large-latest";
-  const anthropicModel = options.env.get("NOA_ANTHROPIC_MODEL") ??
+  const anthropicModel =
     stringSetting(options.fileValues, "NOA_ANTHROPIC_MODEL") ??
     "claude-sonnet-4-5";
 

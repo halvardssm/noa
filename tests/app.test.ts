@@ -27,7 +27,7 @@ function envWith(overrides: Record<string, string>) {
 
 Deno.test("app: resolves allowlist and paths by precedence", async () => {
   const app = await createApp({
-    env: envWith({ NOA_TOOLS: "rg,fd" }),
+    env: envWith({}),
     fileValues: { NOA_TOOLS: "git", NOA_ALLOW_PATHS: "~/dev,~/work" },
     allowToolsFlag: "jq,rg",
     onLog: () => {},
@@ -79,8 +79,8 @@ Deno.test("app: warns when the default path is outside home, not when configured
   assert(!quiet.some((m) => m.includes("outside your home")));
 
   await createApp({
-    env: envWith({ NOA_ALLOW_PATHS: "/srv/project" }),
-    fileValues: {},
+    env: envWith({}),
+    fileValues: { NOA_ALLOW_PATHS: "/srv/project" },
     onLog: (m) => quiet.push(m),
     cwd: "/srv/project",
   });
@@ -305,8 +305,8 @@ Deno.test("app: cloud order follows NOA_CLOUD with only configured providers", a
   };
   // Only claude is configured; mistral in the order is skipped.
   const app = await createApp({
-    env: envWith({ ANTHROPIC_API_KEY: "sk-ant", NOA_CLOUD: "mistral,anthropic" }),
-    fileValues: {},
+    env: envWith({ ANTHROPIC_API_KEY: "sk-ant" }),
+    fileValues: { NOA_CLOUD: "mistral,anthropic" },
     provider: "anthropic",
     onLog: () => {},
     fetchFn,

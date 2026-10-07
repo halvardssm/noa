@@ -13,9 +13,11 @@
   },
   "nodeModulesDir": "none",
   "tasks": {
-    "noa": "deno run --allow-net --allow-sys=systemMemoryInfo --allow-env=NOA_HOME,NOA_TOOLS,NOA_ALLOW_PATHS,NOA_CLOUD,NOA_MISTRAL_MODEL,NOA_ANTHROPIC_MODEL,HOME,MISTRAL_API_KEY,ANTHROPIC_API_KEY,OLLAMA_HOST --allow-read=$PWD,$HOME/.config/noa --allow-write=$PWD,$HOME/.config/noa --allow-run=ls,cat,head,tail,wc,grep,find,jq,curl src/main.ts",
+    "noa": "deno run --allow-net --allow-sys=systemMemoryInfo --allow-env=NOA_HOME,HOME,MISTRAL_API_KEY,ANTHROPIC_API_KEY,OLLAMA_HOST --allow-read=$PWD,$HOME/.config/noa --allow-write=$PWD,$HOME/.config/noa --allow-run=ls,cat,head,tail,wc,grep,find,jq,curl src/main.ts",
     "dev": "deno run -A --watch src/main.ts",
-    "compile": "deno run --allow-env --allow-run=deno scripts/compile.ts",
+    "compile:base": "deno compile --allow-net --allow-sys=systemMemoryInfo --allow-env --allow-read --allow-write --bundle --minify --app-name noa",
+    "compile:darwin:aarch": "deno task compile:base --target aarch64-apple-darwin --output ./dist/noa src/main.ts",
+    "compile": "deno task compile:darwin:aarch",
     "test": "deno test -A"
   },
   "imports": {

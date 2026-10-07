@@ -38,9 +38,8 @@ noa implements no tools of its own. The agent's only capability is invoking **al
 
 1. **Allowed paths (argument-level screening):** any command argument that names an existing filesystem path must resolve — after symlink and `..` resolution — inside the **allowed paths**, or the invocation is rejected. Allowed paths resolve by **precedence — the most specific scope wins, and each level fully replaces the one below:**
    - CLI flag `--allow-paths <p,...>` (this invocation)
-   - env var `NOA_ALLOW_PATHS` (this shell/session — wins over the config file because `@std/dotenv`'s `load()` never overrides existing process env)
    - config file `~/.config/noa/config.json` (global; written via `noa config set NOA_ALLOW_PATHS <p,...>`)
-   - built-in default: **the current directory** — the narrowest scope that is still useful. noa warns on stderr when the current directory is not `$HOME` or one of its folders and nothing was configured explicitly; a flag, env var, or config entry is a deliberate choice and never warns.
+   - built-in default: **the current directory** — the narrowest scope that is still useful. noa warns on stderr when the current directory is not `$HOME` or one of its folders and nothing was configured explicitly; a flag or config entry is a deliberate choice and never warns.
 
    A flag may widen or narrow freely: the same user typed it, so there is nothing to protect against — which is why the earlier `--force-paths` escape hatch is dropped as redundant. `noa config get` prints the effective list so the live configuration is always visible.
 
@@ -48,7 +47,6 @@ noa implements no tools of its own. The agent's only capability is invoking **al
 2. **GET-only web:** `curl` is the only default network tool, and it is screened: invocations containing any method-, body-, or upload-defining argument (`-X` with a non-GET method, `-d`/`--data*`, `-T`/`--upload-file`, `-F`/`--form*`, `--request`) are rejected. This is also argument-level, not structural — the default posture is "GET, no body"; users who want stronger guarantees remove `curl` from their allowlist.
 3. **Allowlisted commands:** there is **no built-in default** — no tools are callable until the user grants them, and noa logs a hint with the suggested example (`ls,cat,head,tail,wc,grep,find,jq,curl`, also shown in `--help`) whenever the allowlist is empty. The effective allowlist resolves by precedence — each level *replaces* (does not merge with) the one below:
    - CLI flag `--allow-tools <cmd,...>` (this invocation)
-   - env var `NOA_TOOLS` (this shell/session)
    - config file (`noa config set NOA_TOOLS <cmd,...>`)
    - nothing (no tools callable)
 
@@ -131,7 +129,7 @@ Conventions: routing decisions/logs go to **stderr**; the answer (and only the a
 
 ## Settings reference
 
-All non-secret settings live in `~/.config/noa/config.json` (JSON, validated with zod; flat string settings plus the `models` array), written via `noa config set` or by hand; env vars beat the file, and CLI flags beat both. A legacy `.env` file is migrated verbatim on first load.
+All non-secret settings live in `~/.config/noa/config.json` (JSON, validated with zod; flat string settings plus the `models` array), written via `noa config set` or by hand. Precedence: CLI flag > config file > built-in default; the environment holds only what is genuinely environmental — `NOA_HOME`, `HOME`, `OLLAMA_HOST`, and the two API keys. A legacy `.env` file is migrated once on first load (secrets skipped).
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
@@ -171,7 +169,7 @@ The repo is done when all of these hold:
 **Security — these MUST all fail safely (test each):**
 
 - [x] `noa read the file ~/.ssh/id_rsa` → denied, outside the allowed paths, even via traversal or symlinks (proof in gate tests)
-- [x] Precedence is observable end to end: with `NOA_ALLOW_PATHS=~/dev,~/work` in `config.json`, shell `NOA_ALLOW_PATHS=~/work`, and `--allow-paths ~/work/src`, the flag wins; drop the flag and the shell env wins over the config file; drop both and the config file wins over the default. Same chain for `NOA_TOOLS`/`--allow-tools`
+- [x] Precedence is observable end to end: with `NOA_ALLOW_PATHS=~/dev,~/work` in `config.json` and `--allow-paths ~/work/src`, the flag wins; drop the flag and the config file wins over the default (current directory). Same chain for `NOA_TOOLS`/`--allow-tools`
 - [x] A prompt asking to POST/PUT data to a URL → rejected: method/body/upload arguments are screened out of `curl` invocations
 - [x] `rm -rf <outside>` → approval prompt; typing `y` does not approve; approval can never override path screening (gate tests)
 - [x] `rm notes.txt` → approval prompt; exact retype approves; only files inside the allowed paths can be affected (gate tests)

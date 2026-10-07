@@ -28,7 +28,7 @@ const args = [
   "compile",
   "--allow-net",
   "--allow-sys=systemMemoryInfo",
-  "--allow-env=NOA_HOME,NOA_TOOLS,NOA_ALLOW_PATHS,NOA_CLOUD,NOA_MISTRAL_MODEL,NOA_ANTHROPIC_MODEL,HOME,MISTRAL_API_KEY,ANTHROPIC_API_KEY,OLLAMA_HOST",
+  "--allow-env=NOA_HOME,HOME,MISTRAL_API_KEY,ANTHROPIC_API_KEY,OLLAMA_HOST",
   `--allow-read=${[...paths, configDir].join(",")}`,
   `--allow-write=${[...paths, configDir].join(",")}`,
   ...(tools === "" ? [] : [`--allow-run=${tools}`]),
