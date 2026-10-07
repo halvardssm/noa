@@ -45,7 +45,7 @@ const terminalInteract: SetupInteract = {
 
 const setup = defineCommand({
   name: "setup",
-  description: "Interactive first-time setup (models, memory cap, API keys)",
+  description: "Interactive first-time setup (models, memory cap)",
   async run(context) {
     if (!Deno.stdin.isTerminal()) {
       throw new UsageError(
@@ -124,7 +124,10 @@ const configUnset = defineCommand({
   description: "Remove a setting",
   args: [{ name: "key", required: true }],
   async run(context) {
-    const removed = await unsetConfigValue(configPath(Deno.env), context.args.key);
+    const removed = await unsetConfigValue(
+      configPath(Deno.env),
+      context.args.key,
+    );
     context.stderr(
       removed ? `unset ${context.args.key}` : `${context.args.key} was not set`,
     );
@@ -133,16 +136,19 @@ const configUnset = defineCommand({
 
 const config = defineCommand({
   name: "config",
-  description: "Manage settings in ~/.config/noa/.env",
+  description: "Manage settings in ~/.config/noa/config.json",
   commands: [configSet, configGet, configList, configUnset],
 });
 
 const root = defineCommand({
   name: "noa",
   version: VERSION,
-  description:
-    "Local-first AI CLI: the smallest sufficient model answers. (Also: noa setup, noa config ...)",
+  description: "Local-first AI CLI: the smallest sufficient model answers.",
   options: {
+    prompt: {
+      type: "string",
+      description: "your question — routed through the model cascade",
+    },
     model: {
       type: "string",
       description:
@@ -164,16 +170,16 @@ const root = defineCommand({
     },
     noVerify: { type: "boolean", description: "skip the verification pass" },
   },
-  args: [{ name: "question", variadic: true, description: "your question" }],
+  commands: [config, setup],
   helpOnEmpty: true,
   async run(context) {
     const stderrLine = (message: string) => context.stderr(message);
     await ensureConfig(configPath(Deno.env), legacyEnvPath(Deno.env));
     const config = await loadConfig(configPath(Deno.env));
 
-    const question = (context.args.question ?? []).join(" ").trim();
+    const question = (context.flags.prompt ?? "").trim();
     if (question === "") {
-      throw new UsageError("pass a question: noa <question>");
+      throw new UsageError("pass a question: noa --prompt <question>");
     }
 
     const app = await createApp({
@@ -210,19 +216,13 @@ async function interactiveRmApproval(
 
 if (import.meta.main) {
   try {
-    // The root command takes the question as variadic args, so `config`
-    // is dispatched by hand before the root sees it.
-    const args = Deno.args;
-    const code = args[0] === "config"
-      ? await runCommand(config, args.slice(1))
-      : args[0] === "setup"
-      ? await runCommand(setup, args.slice(1))
-      : await runCommand(root, args);
-    Deno.exit(code);
+    Deno.exit(await runCommand(root, Deno.args));
   } catch (error) {
     // Anything thrown out of a command: a clear message, never a stack trace.
     Deno.stderr.writeSync(
-      new TextEncoder().encode(`${error instanceof Error ? error.message : String(error)}\n`),
+      new TextEncoder().encode(
+        `${error instanceof Error ? error.message : String(error)}\n`,
+      ),
     );
     Deno.exit(1);
   }

@@ -87,22 +87,24 @@ noa config set <KEY> [VALUE]    write a setting to ~/.config/noa/config.json (pr
 noa config get <KEY>            print a setting (secrets are masked unless --show)
 noa config list                 list all settings (values masked)
 noa config unset <KEY>          remove a setting
-noa <question>                  ask anything — routes automatically
-noa --model <model> <question>  force one Ollama model — no routing, no verification, no escalation.
+noa --prompt <question>         ask anything — routes automatically
+noa --prompt <q> --model <m>    force one Ollama model — no routing, no verification, no escalation.
                                  Examples (the defaults): ministral-3:3b | ministral-3:8b |
                                  ministral-3:14b; any Ollama tag or localN tier also works.
                                  For cloud models, pair with --provider.
-noa --provider <p> [model]      the cloud provider for --model: mistral | anthropic; the
+noa --prompt <q> --provider <p>  the cloud provider for --model: mistral | anthropic; the
                                  provider's default model is used when --model is unset
-noa --allow-tools <cmd,...>     set the tool allowlist for this invocation (highest precedence;
+noa --prompt <q> --allow-tools <cmd,...>
+                                 set the tool allowlist for this invocation (highest precedence;
                                  example: --allow-tools ls,cat,head,tail,wc,grep,find,jq,curl;
                                  persist via noa config set NOA_TOOLS)
-noa --allow-paths <p,...>       set allowed paths for this invocation (highest precedence;
+noa --prompt <q> --allow-paths <p,...>
+                                 set allowed paths for this invocation (highest precedence;
                                  replaces NOA_ALLOW_PATHS / config / default: the current directory)
-noa --no-verify <question>      skip the verification pass
+noa --prompt <q> --no-verify    skip the verification pass
 ```
 
-Conventions: routing decisions/logs go to **stderr**; the answer (and only the answer) to **stdout**, so output is pipeable (`noa explain this | pbcopy`).
+Conventions: routing decisions/logs go to **stderr**; the answer (and only the answer) to **stdout**, so output is pipeable (`noa --prompt "explain this" | pbcopy`).
 
 `noa setup` first asks for **default or custom** models. Default runs a **systems check** (total RAM via `Deno.systemMemoryInfo`) and downloads only what the system can handle — 3b from 6GB, 8b from 12GB, 14b from 24GB — printing a note of what it downloads and what it skips (needs more RAM); the chosen subset is written to `config.json` so the cascade matches what is installed. Custom asks for an ordered, comma-separated model list (smallest to largest), then a one-line description of each model individually (the judge reads these descriptions to route), then pulls them. Everything runs behind explicit prompts, over the Ollama HTTP API only — noa never spawns anything (rule 6). Setup also persists `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile behind a prompt, and ends with a reminder to export `MISTRAL_API_KEY`/`ANTHROPIC_API_KEY` — keys are never stored (rule 8). Setup refuses non-interactive stdin with instructions; the compiled binary may exclude steps via its permission flags.
 
@@ -148,13 +150,13 @@ The repo is done when all of these hold:
 
 - [ ] `deno task noa -- setup` configures a fresh machine end-to-end via prompts only
 - [x] `deno publish --dry-run` passes (JSR rules: explicit types, no slow types)
-- [ ] `deno publish` succeeds; `deno install -g jsr:@halvardm/noa` then `noa <question>` works with no local checkout
+- [ ] `deno publish` succeeds; `deno install -g jsr:@halvardm/noa` then `noa --prompt <question>` works with no local checkout
 - [x] `deno task compile` produces a working single-file executable (verified live: routing, tool runs with baked `--allow-run`, runtime refusal of spawns when compiled without `NOA_TOOLS`, runtime refusal of reads outside the allowed paths)
 - [ ] `npx jsr:@halvardm/noa` also works for npm users
 
 **Routing**
 
-- [x] `noa what is 2+2` answers locally on the 3B, in seconds, with stderr showing the tier chosen
+- [x] `noa --prompt "what is 2+2"` answers locally on the 3B, in seconds, with stderr showing the tier chosen
 - [ ] A moderate code question routes to 8B; a demanding one routes to 14B
 - [ ] A genuinely hard task cascades upward and, if all local tiers fail verification, reaches Claude or Mistral with the improved (rewritten) prompt — visible in stderr
 - [ ] `--provider anthropic` forces cloud and works (code paths unit-tested; needs a live key for full confirmation)
@@ -181,7 +183,7 @@ The repo is done when all of these hold:
 - [x] `~/.config/noa/config.json` is `chmod 600`, git-ignored, and never overwritten by setup (a legacy `.env` is migrated once, verbatim, and left untouched)
 - [x] `config set NOA_TOOLS git,rg` and `config set NOA_ALLOW_PATHS ~/dev,~/work` persist correctly and are active on the next run; `config set models` is refused with a hint to edit the file or rerun setup; `config set MISTRAL_API_KEY` is refused — secrets are never stored, keys come from the environment (verified live)
 - [x] Nothing is written into the package/repo directory at runtime
-- [ ] `git clone` + setup on a second machine reaches a working `noa what is 2+2` without editing any file by hand
+- [ ] `git clone` + setup on a second machine reaches a working `noa --prompt "what is 2+2"` without editing any file by hand
 
 ## License
 

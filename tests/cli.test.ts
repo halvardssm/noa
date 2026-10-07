@@ -82,7 +82,7 @@ Deno.test("cli: config set preserves unrelated entries", async () => {
 
 Deno.test("cli: a question without ollama fails with a clear message", async () => {
   await withHome(async (home) => {
-    const result = await runCli(["what is 2+2"], {
+    const result = await runCli(["--prompt", "what is 2+2"], {
       NOA_HOME: home,
       OLLAMA_HOST: "http://localhost:1", // nothing listens here
     });
@@ -105,4 +105,20 @@ Deno.test("cli: --tools is rejected as an unknown flag", async () => {
     assert(result.code !== 0);
     assert(result.stderr.includes("--tools"));
   });
+});
+
+Deno.test("cli: a bare question without --prompt is a usage error", async () => {
+  await withHome(async (home) => {
+    const result = await runCli(["what is 2+2"], { NOA_HOME: home });
+    assert(result.code !== 0);
+    assert(result.stderr.includes("Unknown command"));
+  });
+});
+
+Deno.test("cli: help lists the subcommands and the prompt flag", async () => {
+  const result = await runCli(["--help"]);
+  assert(result.code === 0);
+  assert(result.stdout.includes("config"));
+  assert(result.stdout.includes("setup"));
+  assert(result.stdout.includes("--prompt"));
 });
