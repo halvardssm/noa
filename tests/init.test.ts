@@ -3,11 +3,12 @@ import {
   appendEnvExports,
   defaultModelsFor,
   profilePathFor,
-  runSetup,
-} from "../src/setup.ts";
+  runInit,
+} from "../src/init.ts";
 import { loadConfig } from "../src/config.ts";
 import {
   jsonResponse,
+  ndjsonResponse,
   withEnv,
   withFetch,
   withLogs,
@@ -55,14 +56,32 @@ Deno.test("defaultModelsFor: the systems check filters by RAM", () => {
   ]);
 });
 
-/** A fake Ollama daemon that records pulls. */
+/** A fake Ollama daemon that records pulls and streams progress events. */
 function ollamaDaemon(pulled: string[]): FetchStub {
   return async (url, init) => {
     const u = String(url);
     if (u.endsWith("/api/tags")) return jsonResponse({ models: [] });
     if (u.endsWith("/api/pull")) {
       pulled.push(JSON.parse((init as RequestInit).body as string).model);
-      return jsonResponse({ status: "success" });
+      return ndjsonResponse([
+        { status: "pulling manifest" },
+        { status: "downloading", digest: "sha256:x", total: 1000, completed: 500 },
+        { status: "verifying sha256 digest" },
+        { status: "success" },
+      ]);
+    }
+    throw new Error(`unexpected url ${u}`);
+  };
+}
+
+/** A daemon whose pulls fail mid-stream with an Ollama error event. */
+function failingPullDaemon(pulled: string[]): FetchStub {
+  return async (url, init) => {
+    const u = String(url);
+    if (u.endsWith("/api/tags")) return jsonResponse({ models: [] });
+    if (u.endsWith("/api/pull")) {
+      pulled.push(JSON.parse((init as RequestInit).body as string).model);
+      return ndjsonResponse([{ error: "some manifest problem" }]);
     }
     throw new Error(`unexpected url ${u}`);
   };
@@ -71,29 +90,30 @@ function ollamaDaemon(pulled: string[]): FetchStub {
 /** Everything the NOA_TEST seam scripts, in one env block. */
 function testEnv(script: {
   confirms?: string;
-  texts?: string;
+  select?: string;
   ramGb?: number;
 }): Record<string, string> {
   return {
     NOA_TEST: "1",
     NOA_TEST_CONFIRM: script.confirms ?? "",
-    NOA_TEST_TEXT: script.texts ?? "",
+    NOA_TEST_SELECT: script.select ?? "",
     ...(script.ramGb !== undefined ? { NOA_TEST_RAM_GB: String(script.ramGb) } : {}),
     SHELL: "/bin/zsh",
   };
 }
 
-Deno.test("setup: default path pulls what the systems check allows", async () => {
+Deno.test("init: default path pulls what the systems check allows", async () => {
   await withNoaHome({ home: true }, async (dir) => {
     const pulled: string[] = [];
-    await withEnv(testEnv({ confirms: "y,y,y", ramGb: 32 }), () =>
+    await withEnv(testEnv({ select: "0", confirms: "y,y", ramGb: 32 }), () =>
       withFetch(ollamaDaemon(pulled), () =>
         withLogs(async (lines) => {
-          assertEquals(await runSetup(), 0);
+          assertEquals(await runInit(), 0);
           assert(lines.some((l) => l.includes("GB of RAM")));
           assert(lines.some((l) => l.includes("the models this system can handle")));
           assert(lines.some((l) => l.includes("ministral-3:14b")));
-          // Three confirms consumed: default setup, download set, memory cap.
+          // The select and both confirms were consumed.
+          assertEquals(Deno.env.get("NOA_TEST_SELECT"), "");
           assertEquals(Deno.env.get("NOA_TEST_CONFIRM"), "");
         })
       )
@@ -104,13 +124,13 @@ Deno.test("setup: default path pulls what the systems check allows", async () =>
   });
 });
 
-Deno.test("setup: default path on a small system skips big models with a note", async () => {
+Deno.test("init: default path on a small system skips big models with a note", async () => {
   await withNoaHome({ home: true }, async (dir) => {
     const pulled: string[] = [];
-    await withEnv(testEnv({ confirms: "y,y", ramGb: 8 }), () =>
+    await withEnv(testEnv({ select: "0", confirms: "y,y", ramGb: 8 }), () =>
       withFetch(ollamaDaemon(pulled), () =>
         withLogs(async (lines) => {
-          assertEquals(await runSetup(), 0);
+          assertEquals(await runInit(), 0);
           assert(lines.some((l) => l.includes("skipping (needs more RAM)")));
           assert(lines.some((l) => l.includes("ministral-3:8b")));
         })
@@ -128,47 +148,63 @@ Deno.test("setup: default path on a small system skips big models with a note", 
   });
 });
 
-Deno.test("setup: custom path asks for an ordered list and descriptions", async () => {
+Deno.test("init: empty models via the selector", async () => {
   await withNoaHome({ home: true }, async (dir) => {
     const pulled: string[] = [];
-    await withEnv(
-      testEnv({
-        confirms: "n,y",
-        texts: "qwen3:4b, llama3.1:8b|chat and trivia|code questions",
-        ramGb: 64,
-      }),
-      () =>
-        withFetch(ollamaDaemon(pulled), async () => {
-          assertEquals(await runSetup(), 0);
-        }),
+    await withEnv(testEnv({ select: "1", ramGb: 32 }), () =>
+      withFetch(ollamaDaemon(pulled), () =>
+        withLogs(async (lines) => {
+          assertEquals(await runInit(), 0);
+          assert(
+            lines.some((l) => l.includes("writing an empty models list")),
+          );
+        })
+      )
     );
-    assertEquals(pulled, ["qwen3:4b", "llama3.1:8b"]);
+    assertEquals(pulled, []);
     const saved = await loadConfig(`${dir}/config.json`);
-    assertEquals(saved.models, [
-      { model: "qwen3:4b", description: "chat and trivia" },
-      { model: "llama3.1:8b", description: "code questions" },
-    ]);
-    // The memory-cap profile was declined (confirms ran out of y's).
-    assert(!await exists(`${dir}/.zshrc`));
+    assertEquals(saved.models, []);
   });
 });
 
-Deno.test("setup: an exhausted confirm queue declines (the memory cap)", async () => {
+Deno.test("init: --empty writes an empty list without any selection or daemon", async () => {
   await withNoaHome({ home: true }, async (dir) => {
-    await withEnv(testEnv({ confirms: "y,y", ramGb: 32 }), () =>
+    // No daemon: --empty never talks to Ollama.
+    await withEnv(
+      testEnv({}),
+      () =>
+        withFetch(
+          () => {
+            throw new Error("no fetch expected with --empty");
+          },
+          async () => {
+            assertEquals(await runInit({ empty: true }), 0);
+            // The selector was never consulted.
+            assertEquals(Deno.env.get("NOA_TEST_SELECT"), "");
+          },
+        ),
+    );
+    const saved = await loadConfig(`${dir}/config.json`);
+    assertEquals(saved.models, []);
+  });
+});
+
+Deno.test("init: an exhausted confirm queue declines (the memory cap)", async () => {
+  await withNoaHome({ home: true }, async (dir) => {
+    await withEnv(testEnv({ select: "0", confirms: "y", ramGb: 32 }), () =>
       withFetch(ollamaDaemon([]), async () => {
-        assertEquals(await runSetup(), 0);
+        assertEquals(await runInit(), 0);
       })
     );
     assert(!await exists(`${dir}/.zshrc`));
   });
 });
 
-Deno.test("setup: a confirmed memory cap is written to the shell profile", async () => {
+Deno.test("init: a confirmed memory cap is written to the shell profile", async () => {
   await withNoaHome({ home: true }, async (dir) => {
-    await withEnv(testEnv({ confirms: "y,y,y", ramGb: 32 }), () =>
+    await withEnv(testEnv({ select: "0", confirms: "y,y", ramGb: 32 }), () =>
       withFetch(ollamaDaemon([]), async () => {
-        assertEquals(await runSetup(), 0);
+        assertEquals(await runInit(), 0);
       })
     );
     const profile = await Deno.readTextFile(`${dir}/.zshrc`);
@@ -177,12 +213,12 @@ Deno.test("setup: a confirmed memory cap is written to the shell profile", async
   });
 });
 
-Deno.test("setup: never stores keys, prints the environment hint", async () => {
+Deno.test("init: never stores keys, prints the environment hint", async () => {
   await withNoaHome({ home: true }, async (dir) => {
-    await withEnv(testEnv({ confirms: "y,n", ramGb: 32 }), () =>
+    await withEnv(testEnv({ select: "0", confirms: "n", ramGb: 32 }), () =>
       withFetch(ollamaDaemon([]), () =>
         withLogs(async (lines) => {
-          assertEquals(await runSetup(), 0);
+          assertEquals(await runInit(), 0);
           assert(lines.some((l) => l.includes("export MISTRAL_API_KEY")));
         })
       )
@@ -192,12 +228,12 @@ Deno.test("setup: never stores keys, prints the environment hint", async () => {
   });
 });
 
-Deno.test("setup: keeps unrelated settings when the config already exists", async () => {
+Deno.test("init: keeps unrelated settings when the config already exists", async () => {
   await withNoaHome({ home: true }, async (dir) => {
     await Deno.writeTextFile(`${dir}/config.json`, '{"ZODIAC": "leo", "models": []}');
-    await withEnv(testEnv({ confirms: "y,n", ramGb: 32 }), () =>
+    await withEnv(testEnv({ select: "0", confirms: "n", ramGb: 32 }), () =>
       withFetch(ollamaDaemon([]), async () => {
-        assertEquals(await runSetup(), 0);
+        assertEquals(await runInit(), 0);
       })
     );
     const saved = await loadConfig(`${dir}/config.json`);
@@ -207,12 +243,12 @@ Deno.test("setup: keeps unrelated settings when the config already exists", asyn
   });
 });
 
-Deno.test("setup: a daemon that is down reports instructions", async () => {
+Deno.test("init: a daemon that is down reports instructions", async () => {
   await withNoaHome({ home: true }, async () => {
     await withEnv(testEnv({}), () =>
       withFetch(() => Promise.reject(new TypeError("refused")), () =>
         withLogs(async (lines) => {
-          assertEquals(await runSetup(), 1);
+          assertEquals(await runInit(), 1);
           assert(
             lines.some((l) =>
               l.includes("ollama serve") || l.includes("Ollama is not running")
@@ -224,17 +260,18 @@ Deno.test("setup: a daemon that is down reports instructions", async () => {
   });
 });
 
-Deno.test("setup: an empty custom list skips model setup cleanly", async () => {
-  await withNoaHome({ home: true }, async (dir) => {
+Deno.test("init: a pull that fails mid-stream aborts with the error", async () => {
+  await withNoaHome({ home: true }, async () => {
     const pulled: string[] = [];
-    await withEnv(testEnv({ confirms: "n", texts: "  ", ramGb: 32 }), () =>
-      withFetch(ollamaDaemon(pulled), async () => {
-        assertEquals(await runSetup(), 0);
-      })
+    await withEnv(testEnv({ select: "0", confirms: "y", ramGb: 32 }), () =>
+      withFetch(failingPullDaemon(pulled), () =>
+        withLogs(async (lines) => {
+          assertEquals(await runInit(), 1);
+          assert(lines.some((l) => l.includes("could not pull ministral-3:3b")));
+        })
+      )
     );
-    assertEquals(pulled, []);
-    const saved = await loadConfig(`${dir}/config.json`);
-    assertEquals(saved.models, []);
+    assertEquals(pulled, ["ministral-3:3b"]);
   });
 });
 

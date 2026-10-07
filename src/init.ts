@@ -5,7 +5,8 @@ import {
   ModelEntry,
   writeModels,
 } from "./config.ts";
-import { askText, confirm, isTestMode } from "./terminal.ts";
+import { askSelect, confirm, isTestMode } from "./terminal.ts";
+import { ProgressBar } from "@std/cli/unstable-progress-bar";
 
 /** A default-cascade model and how much RAM it needs to be comfortable. */
 interface DefaultModelSpec {
@@ -39,44 +40,125 @@ export function defaultModelsFor(totalGb: number): readonly DefaultModelSpec[] {
   return DEFAULT_MODEL_SPECS.filter((spec) => totalGb >= spec.minRamGb);
 }
 
+/** One NDJSON event of Ollama's streamed `/api/pull` response. */
+interface PullEvent {
+  readonly status?: string;
+  readonly completed?: number;
+  readonly total?: number;
+  readonly error?: string;
+}
+
+/**
+ * Pulls a model over Ollama's HTTP API (rule 6: noa never spawns
+ * anything). The pull is streamed (`stream: true`), so the download
+ * progress is shown live with a progress bar on stderr. Under
+ * `NOA_TEST=1` no bar is rendered — the events are just consumed.
+ */
 async function pullModel(model: string, baseUrl: string): Promise<void> {
   console.log(`pulling ${model} (this can take a while)...`);
   const response = await fetch(`${baseUrl}/api/pull`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, stream: false }),
+    body: JSON.stringify({ model, stream: true }),
   });
   if (!response.ok) {
     throw new Error(`Ollama pull ${model}: HTTP ${response.status}`);
   }
-  console.log(`pulled ${model}`);
+  if (response.body === null) {
+    throw new Error(`Ollama pull ${model}: empty response`);
+  }
+
+  let progress: ProgressBar | null = null;
+  try {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for await (const chunk of response.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (line === "") continue;
+        const event = JSON.parse(line) as PullEvent;
+        if (event.error !== undefined) {
+          throw new Error(`Ollama pull ${model}: ${event.error}`);
+        }
+        if (
+          progress === null && !isTestMode() &&
+          typeof event.total === "number" && event.total > 0
+        ) {
+          progress = new ProgressBar({
+            max: event.total,
+            value: event.completed ?? 0,
+            barLength: 40,
+          });
+        }
+        if (progress !== null && typeof event.completed === "number") {
+          progress.value = event.completed;
+        }
+        if (event.status === "success") {
+          console.log(`pulled ${model}`);
+          return;
+        }
+      }
+    }
+    console.log(`pulled ${model}`);
+  } finally {
+    if (progress !== null) await progress.stop();
+  }
+}
+
+/** Options of {@linkcode runInit}. */
+export interface InitOptions {
+  /** `--empty`: write an empty models list without any model prompts. */
+  readonly empty?: boolean;
 }
 
 /**
- * Interactive first-time setup. Every step is behind an explicit yes/no or
- * a typed answer: daemon check, model setup (default with a systems check,
- * or a custom ordered list with per-model descriptions), shell-profile env
- * persistence for the memory cap. Setup talks to the Ollama daemon over
- * HTTP only — noa never spawns anything (rule 6). Under `NOA_TEST=1` the
- * prompts come from `NOA_TEST_CONFIRM`/`NOA_TEST_TEXT` and the systems
- * check reads `NOA_TEST_RAM_GB`.
+ * Interactive first-time init. The model cascade is chosen from a
+ * selection menu: the default ministral-3 cascade (with a systems check
+ * and streamed downloads) or an empty models list the user fills into
+ * `config.json` by hand — `--empty` picks the latter without prompting.
+ * Afterwards the memory-cap shell profile is offered. Under
+ * `NOA_TEST=1` the menu is scripted via `NOA_TEST_SELECT`, confirms via
+ * `NOA_TEST_CONFIRM`, and the systems check reads `NOA_TEST_RAM_GB`.
  */
-export async function runSetup(): Promise<number> {
-  const baseUrl = ollamaBaseUrl();
+export async function runInit(options: InitOptions = {}): Promise<number> {
+  let models: ModelEntry[] | null = [];
 
-  if (!await ollamaIsUp(baseUrl)) {
-    console.log(
-      "Ollama is not running — install it (brew install ollama) and start it with `ollama serve`, then rerun noa setup",
+  if (options.empty === true) {
+    // No pulls and no daemon needed: just write the empty list.
+    console.log("empty models list — nothing is pulled or configured");
+  } else {
+    const baseUrl = ollamaBaseUrl();
+    if (!await ollamaIsUp(baseUrl)) {
+      console.log(
+        "Ollama is not running — install it (brew install ollama) and start it with `ollama serve`, then rerun noa init",
+      );
+      return 1;
+    }
+    console.log(`Ollama is up at ${baseUrl}`);
+
+    const choice = askSelect(
+      "Model setup:",
+      [
+        "Default cascade (ministral-3: 3b, 8b, 14b — with a systems check)",
+        "Empty models list (fill config.json yourself; cloud-only until then)",
+      ],
     );
-    return 1;
+    if (choice === null) {
+      console.log("no selection — rerun noa init");
+      return 1;
+    }
+    models = choice === 0 ? await defaultSetup() : [];
   }
-  console.log(`Ollama is up at ${baseUrl}`);
-
-  const models = confirm("Use the default model setup (ministral-3 cascade)?")
-    ? await defaultSetup()
-    : await customSetup();
   if (models === null) return 1;
 
+  if (models.length === 0) {
+    console.log(
+      `writing an empty models list to ${configPath()} — add your cascade to "models"; until then noa answers from the cloud only`,
+    );
+  }
   await writeModels(configPath(), models);
 
   const home = Deno.env.get("HOME");
@@ -98,9 +180,7 @@ export async function runSetup(): Promise<number> {
         );
         console.log(`wrote the memory cap to ${profile}`);
       } catch {
-        console.log(
-          `cannot write ${profile} — add these lines yourself:`,
-        );
+        console.log(`cannot write ${profile} — add these lines yourself:`);
         for (const [name, value] of Object.entries(OLLAMA_ENV_EXPORTS)) {
           console.log(`  export ${name}=${value}`);
         }
@@ -114,11 +194,11 @@ export async function runSetup(): Promise<number> {
     "cloud API keys come from your shell environment — export MISTRAL_API_KEY and/or ANTHROPIC_API_KEY to enable cloud tiers",
   );
 
-  console.log("setup complete — try: noa what is 2+2");
+  console.log("init complete — try: noa -p \"what is 2+2\"");
   return 0;
 }
 
-/** The default setup: systems check, then only the models it can handle. */
+/** The default cascade: systems check, then only the models it can handle. */
 async function defaultSetup(): Promise<ModelEntry[] | null> {
   const memory = memoryInfo();
   const totalGb = memory === null ? null : memory.total / 2 ** 30;
@@ -176,53 +256,6 @@ async function defaultSetup(): Promise<ModelEntry[] | null> {
     }
   }
   return candidates.map((spec) => spec.entry);
-}
-
-/** The custom setup: an ordered list, then a description per model. */
-async function customSetup(): Promise<ModelEntry[] | null> {
-  const list = askText(
-    "Models for noa to download and use, smallest to largest, comma-separated:",
-  ) ?? "";
-  const tags = list.split(",").map((tag) => tag.trim()).filter((tag) =>
-    tag !== ""
-  );
-  if (tags.length === 0) {
-    console.log("no models given — skipping model setup");
-    return [];
-  }
-  if (tags.length !== new Set(tags).size) {
-    console.log("the model list contains duplicates — skipping model setup");
-    return null;
-  }
-
-  const models: ModelEntry[] = [];
-  for (const tag of tags) {
-    const description = askText(
-      `What is ${tag} for? (one short line for routing; empty to skip):`,
-    ) ?? "";
-    models.push({
-      model: tag,
-      ...(description !== "" ? { description } : {}),
-    });
-  }
-
-  if (!confirm(`Download ${models.length} model(s) (${tags.join(", ")})?`)) {
-    console.log("skipping model downloads");
-    return models;
-  }
-  for (const model of models) {
-    try {
-      await pullModel(model.model, ollamaBaseUrl());
-    } catch (error) {
-      console.log(
-        `could not pull ${model.model}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return null;
-    }
-  }
-  return models;
 }
 
 /**

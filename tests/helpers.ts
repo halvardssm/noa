@@ -2,15 +2,17 @@
  * Shared test scaffolding. Production code reads ambient state directly
  * (`fetch`, `Deno.env`, `console`), so tests drive it with global stubs and
  * env vars — never with injected functions. `NOA_TEST=1` additionally
- * scripts terminal prompts (`NOA_TEST_CONFIRM`/`NOA_TEST_TEXT`) and the
- * systems check (`NOA_TEST_RAM_GB`); see src/terminal.ts.
+ * scripts terminal prompts (`NOA_TEST_CONFIRM`, `NOA_TEST_SELECT`) and
+ * the systems check (`NOA_TEST_RAM_GB`); see src/terminal.ts.
  */
 
-/** The part of `Response` the providers use. */
+/** The part of `Response` noa's code paths use. */
 export interface ResponseLike {
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
+  /** Present for streaming endpoints (Ollama's streamed pulls). */
+  body?: ReadableStream<Uint8Array>;
 }
 
 /** A fetch stub: the piece of `fetch` noa's providers call. */
@@ -24,6 +26,26 @@ export function jsonResponse(body: unknown, status = 200): ResponseLike {
     ok: status >= 200 && status < 300,
     status,
     json: () => Promise.resolve(body),
+  };
+}
+
+/** A streaming response carrying the given NDJSON events. */
+export function ndjsonResponse(
+  events: unknown[],
+  status = 200,
+): ResponseLike {
+  const encoder = new TextEncoder();
+  const text = events.map((e) => `${JSON.stringify(e)}\n`).join("");
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(events[events.length - 1]),
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(text));
+        controller.close();
+      },
+    }),
   };
 }
 

@@ -1,12 +1,14 @@
 /**
  * Terminal interaction helpers. In normal use they wrap Deno's built-in
- * `confirm`/`prompt` dialogs. When the test-only `NOA_TEST=1` env var is
- * set, answers are instead consumed from `NOA_TEST_CONFIRM` and
- * `NOA_TEST_TEXT` — comma- and pipe-separated, in call order — so the
- * test suite drives interactive code through the environment without
- * any injected functions. An exhausted queue declines confirms and
- * returns empty text.
+ * `confirm` dialog and the `@std/cli` select prompt. When the test-only
+ * `NOA_TEST=1` env var is set, answers are instead consumed from
+ * `NOA_TEST_CONFIRM` (comma-separated) and `NOA_TEST_SELECT`
+ * (comma-separated indices) — in call order — so the test suite drives
+ * interactive code through the environment without any injected
+ * functions. An exhausted confirm queue declines; an exhausted or
+ * invalid select queue picks the first option.
  */
+import { promptSelect } from "@std/cli/unstable-prompt-select";
 
 /** True when the test suite is driving noa via `NOA_TEST=1`. */
 export function isTestMode(): boolean {
@@ -47,17 +49,31 @@ export function confirm(message: string): boolean {
 }
 
 /**
- * Asks a free-text question on the terminal and returns the answer,
- * or null on EOF. Test mode pops from `NOA_TEST_TEXT` (never null).
+ * Shows a selection menu on the terminal and returns the index of the
+ * chosen option, or null when there is no answer (EOF or a
+ * non-interactive terminal). In test mode the index is popped from
+ * `NOA_TEST_SELECT`; an exhausted or out-of-range queue selects the
+ * first option.
  *
  * @example
  * ```ts
- * import { askText } from "./terminal.ts";
+ * import { askSelect } from "./terminal.ts";
  *
- * const name = askText("What is your name?");
+ * const choice = askSelect("Model setup:", ["default", "empty"]);
+ * if (choice === null) Deno.exit(1);
  * ```
  */
-export function askText(message: string): string | null {
-  if (isTestMode()) return nextScripted("NOA_TEST_TEXT", "|");
-  return globalThis.prompt(message);
+export function askSelect(
+  message: string,
+  values: readonly string[],
+): number | null {
+  if (isTestMode()) {
+    const raw = nextScripted("NOA_TEST_SELECT", ",");
+    const index = /^\d+$/.test(raw) ? Number(raw) : 0;
+    return index < values.length ? index : 0;
+  }
+  const chosen = promptSelect(message, [...values]);
+  if (chosen === null) return null;
+  const index = values.indexOf(chosen);
+  return index >= 0 ? index : null;
 }

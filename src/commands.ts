@@ -13,18 +13,26 @@ import {
   unsetConfigValue,
 } from "./config.ts";
 import { runRepl } from "./lib/io.ts";
-import { runSetup } from "./setup.ts";
+import { runInit } from "./init.ts";
 
-const setup = defineCommand({
-  name: "setup",
-  description: "Interactive first-time setup (models, memory cap)",
-  async run() {
+const init = defineCommand({
+  name: "init",
+  description:
+    "Interactive first-time init: pick the model cascade (default or empty) and the memory cap",
+  options: {
+    empty: {
+      type: "boolean",
+      description:
+        "write an empty models list without any model prompts — fill config.json yourself",
+    },
+  },
+  async run(context) {
     if (!Deno.stdin.isTerminal()) {
       throw new UsageError(
-        "noa setup is interactive — run it in a terminal (or pull models directly: ollama pull ministral-3:3b)",
+        "noa init is interactive — run it in a terminal (or pull models directly: ollama pull ministral-3:3b)",
       );
     }
-    return await runSetup();
+    return await runInit({ empty: context.flags.empty === true });
   },
 });
 
@@ -161,7 +169,7 @@ export const rootCommand = defineCommand({
     },
     ...questionOptions,
   },
-  commands: [config, setup, repl],
+  commands: [config, init, repl],
   async run(context) {
     const question = (context.flags.prompt ?? "").trim();
     if (question === "") {

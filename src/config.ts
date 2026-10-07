@@ -184,7 +184,7 @@ export async function setConfigValue(
 ): Promise<void> {
   if (key === "models") {
     throw new TypeError(
-      "models are a list — edit config.json directly or rerun `noa setup`",
+      "models are a list — edit config.json directly or rerun `noa init`",
     );
   }
   if (isSecretKey(key)) {

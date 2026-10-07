@@ -101,8 +101,8 @@ Deno.test("cli: a question without ollama fails with a clear message", async () 
   });
 });
 
-Deno.test("cli: setup refuses non-interactive stdin with instructions", async () => {
-  const result = await runCli(["setup"]);
+Deno.test("cli: init refuses non-interactive stdin with instructions", async () => {
+  const result = await runCli(["init"]);
   assert(result.code !== 0);
   assert(result.stderr.includes("interactive"));
   assert(result.stderr.includes("ollama pull"));
@@ -128,7 +128,7 @@ Deno.test("cli: help lists the subcommands and the prompt flag", async () => {
   const result = await runCli(["--help"]);
   assert(result.code === 0);
   assert(result.stdout.includes("config"));
-  assert(result.stdout.includes("setup"));
+  assert(result.stdout.includes("init"));
   assert(result.stdout.includes("--prompt"));
 });
 

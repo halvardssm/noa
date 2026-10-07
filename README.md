@@ -55,7 +55,7 @@ noa implements no tools of its own. The agent's only capability is invoking **al
 5. **Full Deno permissions by design:** noa runs and compiles with `-A` (`--allow-all`), so Deno never interposes a permission prompt — its interactive prompts also break terminal input after a sync `prompt()`. Deno's flags only ever bound noa's own process, not the spawned commands the model requests (rule 6), so they added friction without adding real containment. The gate (rules 1-4) is the sole enforcement point; users who want a runtime layer beneath it can still run from source with scoped flags (`deno run --allow-run=<your,tools> --allow-read=<your,paths> ... cli.ts`).
 6. **Subprocess reality:** Deno permissions are enforced on the Deno process only — never on child processes. With `-A` nothing constrains which executables noa may spawn except the gate (rule 3); once spawned, a child runs with the user's full privileges. Therefore **noa never spawns Ollama**: Ollama runs as an independent user daemon and noa talks to it over `localhost:11434`. The model executes nothing — it can only produce a request that passes through the gate inside noa's own process.
 7. **Code-level enforcement only:** every setting — the allowlist, the allowed paths, GET-only screening, `rm` approval — is enforced by the gate in code, identically from source and from the compiled binary. There is no runtime permission layer beneath it anymore: removing the code checks would remove the boundary, which is the honest trade-off of `-A`. A configured allowlist is only as strong as its weakest entry — adding `curl` unscreened or `node` effectively voids the GET-only posture and any path discipline.
-8. **No secrets at rest:** API keys are **never stored**. `config set` refuses secret-looking keys (`*_KEY`, `*_TOKEN`, `*_SECRET`) with an export hint; a legacy `.env` migration skips them; and a key found in `config.json` is ignored with a stderr warning. Providers check that their key is present when selected and read it from the environment **at request time**, attaching it directly to the fetch request — the key never flows through the app. For everything else, `config set` writes one string setting to `~/.config/noa/config.json` (`chmod 600` on creation, additive, never reordering unrelated entries); the `models` list is edited by hand or via `noa setup`. Secret-looking values that someone hand-edits into the file are still masked in `config get`/`config list` output unless `--show` is passed. Widening settings (`NOA_TOOLS`, `NOA_ALLOW_PATHS`) are writable via `config set` — the user acting deliberately at the keyboard, the same trust level as editing the file by hand; the model still cannot touch them, because it only ever requests allowlisted command runs, and `noa`/`config` are not allowlisted commands.
+8. **No secrets at rest:** API keys are **never stored**. `config set` refuses secret-looking keys (`*_KEY`, `*_TOKEN`, `*_SECRET`) with an export hint; a legacy `.env` migration skips them; and a key found in `config.json` is ignored with a stderr warning. Providers check that their key is present when selected and read it from the environment **at request time**, attaching it directly to the fetch request — the key never flows through the app. For everything else, `config set` writes one string setting to `~/.config/noa/config.json` (`chmod 600` on creation, additive, never reordering unrelated entries); the `models` list is edited by hand or via `noa init`. Secret-looking values that someone hand-edits into the file are still masked in `config get`/`config list` output unless `--show` is passed. Widening settings (`NOA_TOOLS`, `NOA_ALLOW_PATHS`) are writable via `config set` — the user acting deliberately at the keyboard, the same trust level as editing the file by hand; the model still cannot touch them, because it only ever requests allowlisted command runs, and `noa`/`config` are not allowlisted commands.
 
 ## Where things live
 
@@ -85,7 +85,8 @@ noa                             bare noa starts an interactive session (the repl
 noa repl                        the same session, explicit: one question per line,
                                  each routed independently; exit/quit or Ctrl-D ends it;
                                  routing logs and the prompt go to stderr, answers to stdout
-noa setup                       interactive first-time setup (models: default or custom, memory cap, keys)
+noa init                       interactive first-time init (models: default or empty, memory cap, keys)
+noa init --empty                write an empty models list without prompts — fill config.json yourself
 noa config set <KEY> [VALUE]    write a setting to ~/.config/noa/config.json (prompts with hidden
                                  input if VALUE omitted); e.g. noa config set MISTRAL_API_KEY
 noa config get <KEY>            print a setting (secrets are masked unless --show)
@@ -112,7 +113,7 @@ noa --prompt <q> --debug        show routing decisions, tool runs, and
 
 Conventions: the answer (and only the answer) goes to **stdout**, so output is pipeable (`noa --prompt "explain this" | pbcopy`). Routing decisions, tool runs, verification verdicts, and hints are silent by default and appear on **stderr only with `--debug`**; errors always print to stderr.
 
-`noa setup` first asks for **default or custom** models. Default runs a **systems check** (total RAM via `Deno.systemMemoryInfo`) and offers only what the system can handle — 3b from 6GB, 8b from 12GB, 14b from 24GB — printing a note of what it downloads and what it skips (needs more RAM); one confirmation covers the whole set, and declining it still writes the chosen subset to `config.json` so the cascade matches what is installed. Custom asks for an ordered, comma-separated model list (smallest to largest), then a one-line description of each model individually (the judge reads these descriptions to route), then confirms and pulls them. Everything runs behind explicit prompts, over the Ollama HTTP API only — noa never spawns anything (rule 6). Setup also persists `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile behind a prompt, and ends with a reminder to export `MISTRAL_API_KEY`/`ANTHROPIC_API_KEY` — keys are never stored (rule 8). Setup refuses non-interactive stdin with instructions.
+`noa init` shows a **selection menu** with two choices. **Default cascade** runs a **systems check** (total RAM via `Deno.systemMemoryInfo`) and offers only what the system can handle — 3b from 6GB, 8b from 12GB, 14b from 24GB — printing a note of what it downloads and what it skips (needs more RAM); one confirmation covers the whole set, and declining it still writes the chosen subset to `config.json` so the cascade matches what is installed. Pulls are streamed (`stream: true`), with a live progress bar on stderr. **Empty models list** writes `"models": []` and nothing else — the user fills `config.json` by hand (cloud-only until then); `--empty` picks this without the menu and needs no running daemon. Everything runs behind explicit prompts, over the Ollama HTTP API only — noa never spawns anything (rule 6). Init also persists `OLLAMA_MAX_LOADED_MODELS=2`/`OLLAMA_KEEP_ALIVE=5m` in the shell profile behind a prompt, and ends with a reminder to export `MISTRAL_API_KEY`/`ANTHROPIC_API_KEY` — keys are never stored (rule 8). Init refuses non-interactive stdin with instructions.
 
 ## Implementation milestones
 
@@ -122,15 +123,15 @@ Conventions: the answer (and only the answer) goes to **stdout**, so output is p
 - Command execution gate: allowlist and allowed paths resolved via the precedence chain (`--allow-tools`/`--allow-paths` > `NOA_TOOLS`/`NOA_ALLOW_PATHS` env > config file > no tools / current directory), argument path screening, curl method screening, stderr invocation log
 - `noa config set|get|list|unset` — settings live in `~/.config/noa/config.json`, so no hand-editing is required
 - Cloud: Mistral only, via the `CloudProvider` interface
-- Config via `noa config`; no `noa setup` yet
+- Config via `noa config`; no `noa init` yet
 
-**Milestone 2 — destructive capability and setup**
+**Milestone 2 — destructive capability and init**
 
 - Gated `rm` (rule 4)
 - Anthropic provider; weighted, configurable provider order (`NOA_CLOUD`)
-- `noa setup` (interactive, HTTP-API based; noa never spawns anything)
+- `noa init` (interactive, HTTP-API based; noa never spawns anything)
 - Compiled binary via `deno compile -A` (rule 5): the gate in code is the sole enforcement point, identical to running from source
-- User-defined local models: the ordered `models` array in `config.json` (arbitrary count, per-model descriptions for the judge); setup offers default (with systems check) or custom
+- User-defined local models: the ordered `models` array in `config.json` (arbitrary count, per-model descriptions for the judge); init offers default (with systems check) or empty
 
 **Status:** implemented and tested; publishing to JSR/npm deliberately not done yet. The security rules above are the standing spec for both milestones.
 
@@ -147,7 +148,7 @@ All non-secret settings live in `~/.config/noa/config.json` (JSON, validated wit
 | `NOA_MISTRAL_MODEL` / `NOA_ANTHROPIC_MODEL` | Cloud model overrides | `mistral-large-latest` / `claude-sonnet-4-5` |
 | `MISTRAL_API_KEY` / `ANTHROPIC_API_KEY` | Cloud API keys — **environment only, never stored** (export in your shell) | unset |
 | `NOA_HOME` | Config directory | `~/.config/noa` |
-| `NOA_TEST` | Test-only switch (with `NOA_TEST_CONFIRM`, `NOA_TEST_TEXT`, `NOA_TEST_RAM_GB`): scripts terminal prompts and the systems check so the suite needs no injected functions | unset |
+| `NOA_TEST` | Test-only switch (with `NOA_TEST_CONFIRM`, `NOA_TEST_SELECT`, `NOA_TEST_RAM_GB`): scripts terminal dialogs, the selection menu, and the systems check so the suite needs no injected functions | unset |
 
 ## Success requirements
 
@@ -155,7 +156,7 @@ The repo is done when all of these hold:
 
 **Build &amp; distribution**
 
-- [ ] `deno task run setup` configures a fresh machine end-to-end via prompts only
+- [ ] `deno task run init` configures a fresh machine end-to-end via prompts only
 - [x] `deno publish --dry-run` passes (JSR rules: explicit types, no slow types)
 - [ ] `deno publish` succeeds; `deno install -g jsr:@halvardm/noa` then `noa --prompt <question>` works with no local checkout
 - [x] `deno task compile` produces a working single-file executable (verified live: routing and tool runs). Compiled with `-A` since rule 5 changed: Deno's runtime no longer enforces anything, the gate (rules 1-4) is the sole enforcement point
@@ -187,10 +188,10 @@ The repo is done when all of these hold:
 
 **Hygiene**
 
-- [x] `~/.config/noa/config.json` is `chmod 600`, git-ignored, and never overwritten by setup (a legacy `.env` is migrated once, verbatim, and left untouched)
-- [x] `config set NOA_TOOLS git,rg` and `config set NOA_ALLOW_PATHS ~/dev,~/work` persist correctly and are active on the next run; `config set models` is refused with a hint to edit the file or rerun setup; `config set MISTRAL_API_KEY` is refused — secrets are never stored, keys come from the environment (verified live)
+- [x] `~/.config/noa/config.json` is `chmod 600`, git-ignored, and never overwritten by init (a legacy `.env` is migrated once, verbatim, and left untouched)
+- [x] `config set NOA_TOOLS git,rg` and `config set NOA_ALLOW_PATHS ~/dev,~/work` persist correctly and are active on the next run; `config set models` is refused with a hint to edit the file or rerun init; `config set MISTRAL_API_KEY` is refused — secrets are never stored, keys come from the environment (verified live)
 - [x] Nothing is written into the package/repo directory at runtime
-- [ ] `git clone` + setup on a second machine reaches a working `noa --prompt "what is 2+2"` without editing any file by hand
+- [ ] `git clone` + init on a second machine reaches a working `noa --prompt "what is 2+2"` without editing any file by hand
 
 ## License
 
