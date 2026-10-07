@@ -1,11 +1,14 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { extractJson, judge } from "../src/judge.ts";
-import { verify } from "../src/verify.ts";
-import { cascade } from "../src/router.ts";
-import type { ChatAnswer, ChatMessage } from "../src/ollama.ts";
-import type { ChatFn } from "../src/router.ts";
-import type { Tier } from "../src/judge.ts";
-import { withErrors } from "./helpers.ts";
+import { extractJson, judge } from "../src/lib/judge.ts";
+import { verify } from "../src/lib/verify.ts";
+import { cascade } from "../src/lib/router.ts";
+import type {
+  ChatAnswer,
+  ChatMessage,
+} from "../src/lib/providers/ollama-old.ts";
+import type { ChatFn } from "../src/lib/router.ts";
+import type { Tier } from "../src/lib/judge.ts";
+import { withLogRecords } from "./helpers.ts";
 
 function chatReturning(text: string): ChatFn {
   return async () => ({ content: text, toolCalls: [] });
@@ -24,8 +27,8 @@ function judgmentJson(
 
 Deno.test("extractJson: pulls JSON out of fenced or prose output", () => {
   assertEquals(extractJson('{"a":1}'), { a: 1 });
-  assertEquals(extractJson("```json\n{\"a\":1}\n```"), { a: 1 });
-  assertEquals(extractJson("Sure! Here: {\"a\":1} hope it helps"), { a: 1 });
+  assertEquals(extractJson('```json\n{"a":1}\n```'), { a: 1 });
+  assertEquals(extractJson('Sure! Here: {"a":1} hope it helps'), { a: 1 });
   assertEquals(extractJson("no json here"), null);
 });
 
@@ -66,10 +69,10 @@ Deno.test("judge: the system prompt lists the user's tiers and descriptions", as
   assert(prompt.includes("never a list"));
 });
 
-Deno.test("judge: legacy tier names map onto positions", async () => {
+Deno.test("judge: unknown tier names fall back; provider names mean cloud", async () => {
   const chat = chatReturning(judgmentJson("local8b", "p"));
   const j = await judge("q", { chat, tiers: JUDGE_TIERS });
-  assertEquals(j.tier, "local2");
+  assertEquals(j.tier, "local1");
   const cloudName = chatReturning(judgmentJson("mistral", "p"));
   assertEquals(
     (await judge("q", { chat: cloudName, tiers: JUDGE_TIERS })).tier,
@@ -97,7 +100,9 @@ Deno.test("verify: PASS on a matching answer", async () => {
 });
 
 Deno.test("verify: FAIL names the deficiency", async () => {
-  const chat = chatReturning(JSON.stringify({ verdict: "FAIL", reason: "wrong" }));
+  const chat = chatReturning(
+    JSON.stringify({ verdict: "FAIL", reason: "wrong" }),
+  );
   const v = await verify("what is 2+2", "5", { chat });
   assertEquals(v.pass, false);
   assertEquals(v.reason, "wrong");
@@ -121,7 +126,10 @@ function fixture(
 ): {
   fx: Fixture;
   deps: Parameters<typeof cascade>[1];
-  run: (question: string, deps: Parameters<typeof cascade>[1]) => Promise<string>;
+  run: (
+    question: string,
+    deps: Parameters<typeof cascade>[1],
+  ) => Promise<string>;
 } {
   const fx: Fixture = { chats: {}, logs: [], gateCalls: [] };
   for (const [tier, replies] of Object.entries(scripts)) {
@@ -144,9 +152,10 @@ function fixture(
     .sort() as Tier[];
   const deps = {
     localTiers,
-    chatFor: (tier: string) => fx.chats[tier] ?? (() => {
-      throw new Error(`no chat for ${tier}`);
-    }),
+    chatFor: (tier: string) =>
+      fx.chats[tier] ?? (() => {
+        throw new Error(`no chat for ${tier}`);
+      }),
     gate: {
       run: async (command: string, args: string[]) => {
         fx.gateCalls.push({ command, args });
@@ -157,16 +166,15 @@ function fixture(
         };
       },
     },
-    debug: true,
   };
-  /** Runs the cascade with stderr captured into `fx.logs`. */
+  /** Runs the cascade with its log records captured into `fx.logs`. */
   const run = async (
     question: string,
     d: Parameters<typeof cascade>[1],
   ): Promise<string> =>
-    await withErrors(async (lines) => {
+    await withLogRecords(async (records) => {
       const answer = await cascade(question, d);
-      fx.logs.push(...lines);
+      fx.logs.push(...records.map((r) => r.message.join("")));
       return answer;
     });
   return { fx, deps, run };
@@ -256,7 +264,8 @@ Deno.test("cascade: forced anthropic without configuration names its key", async
     verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
   });
   const error = await assertRejects(
-    () => run("q", { ...deps, forced: { kind: "cloud", provider: "anthropic" } }),
+    () =>
+      run("q", { ...deps, forced: { kind: "cloud", provider: "anthropic" } }),
     Error,
   );
   assert(error.message.includes("anthropic is not configured"));
@@ -311,7 +320,10 @@ Deno.test("cascade: forced tier skips verification", async () => {
     local2: ["forced answer"],
     verify: [JSON.stringify({ verdict: "FAIL", reason: "should not run" })],
   });
-  const answer = await run("q", { ...deps, forced: { kind: "tier", tier: "local2" } });
+  const answer = await run("q", {
+    ...deps,
+    forced: { kind: "tier", tier: "local2" },
+  });
   assertEquals(answer, "forced answer");
   assert(!fx.logs.some((l) => l.includes("verdict")));
 });
@@ -326,7 +338,10 @@ Deno.test("cascade: the model can run tools in the agent loop", async () => {
     verify: [JSON.stringify({ verdict: "PASS", reason: "ok" })],
   }, { gateResult: "app.ts" });
   const answer = await run("list my files", deps);
-  assertEquals(answer, "The directory contains app.ts (see the tool output above).");
+  assertEquals(
+    answer,
+    "The directory contains app.ts (see the tool output above).",
+  );
   assertEquals(fx.gateCalls, [{ command: "ls", args: ["-la", "."] }]);
 });
 
@@ -374,7 +389,11 @@ Deno.test("cascade: a failing tier escalates instead of crashing", async () => {
   };
   const answer = await run("q", deps2);
   assertEquals(answer, "good answer");
-  assert(fx.logs.some((l) => l.includes("local1 failed") && l.includes("escalating")));
+  assert(
+    fx.logs.some((l) =>
+      l.includes("local1 failed") && l.includes("escalating")
+    ),
+  );
 });
 
 Deno.test("cascade: a daemon-down error is fatal, not skippable", async () => {
@@ -452,7 +471,11 @@ Deno.test("cascade: a failing judge falls back to the raw question", async () =>
   };
   const answer = await run("raw question", deps2);
   assertEquals(answer, "judge is down answer");
-  assert(fx.logs.some((l) => l.includes("judge failed") && l.includes("raw question")));
+  assert(
+    fx.logs.some((l) =>
+      l.includes("judge failed") && l.includes("raw question")
+    ),
+  );
 });
 
 Deno.test("cascade: a forced model tag answers directly, bypassing judge and verify", async () => {
@@ -546,7 +569,11 @@ Deno.test("cascade: a cloud tier with a missing provider escalates", async () =>
     clouds: [],
   });
   assertEquals(answer, "ollama tier answer");
-  assert(fx.logs.some((l) => l.includes("local1 (mistral-small-latest) needs mistral")));
+  assert(
+    fx.logs.some((l) =>
+      l.includes("local1 (mistral-small-latest) needs mistral")
+    ),
+  );
 });
 
 Deno.test("cascade: cloud tiers in the list are served by their provider", async () => {

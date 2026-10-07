@@ -1,10 +1,6 @@
-import { createApp } from "../app.ts";
-import {
-  configPath,
-  ensureConfig,
-  legacyEnvPath,
-  loadConfig,
-} from "../config.ts";
+import { createApp } from "./orchestrator.ts";
+import type { NoaConfig } from "./config.ts";
+import { textEncoder } from "./utils.ts";
 
 /**
  * Reads one visible line from stdin (the terminal echoes as the user
@@ -30,6 +26,7 @@ export async function readLine(): Promise<string | null> {
  * reported and the session continues.
  */
 export async function runRepl(
+  config: NoaConfig,
   flags: {
     model?: string;
     provider?: string;
@@ -39,8 +36,6 @@ export async function runRepl(
     debug?: boolean;
   },
 ): Promise<number> {
-  await ensureConfig(configPath(), legacyEnvPath());
-  const config = await loadConfig(configPath());
   const app = await createApp({
     fileValues: config,
     allowToolsFlag: flags.allowTools,
@@ -48,10 +43,12 @@ export async function runRepl(
     model: flags.model,
     provider: flags.provider,
     noVerify: flags.noVerify,
-    debug: flags.debug === true,
   });
-  console.error("noa repl — one question per line; exit or Ctrl-D to quit");
-  const prompt = new TextEncoder().encode("> ");
+
+  console.info("noa repl — one question per line; exit or Ctrl-D to quit");
+
+  const prompt = textEncoder.encode("> ");
+
   while (true) {
     Deno.stderr.writeSync(prompt);
     const line = await readLine();
@@ -65,4 +62,14 @@ export async function runRepl(
     }
   }
   return 0;
+}
+
+export function exitWithError(message: string, exitCode: number = 1): never {
+  console.error(message);
+  Deno.exit(exitCode);
+}
+
+export function exitWithMessage(message: string): never {
+  console.info(message);
+  Deno.exit(0);
 }

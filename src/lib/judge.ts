@@ -27,13 +27,14 @@ export function judgeSystemPrompt(tiers: readonly TierInfo[]): string {
     `- ${tier.name}: ${tier.description ?? `local tier ${index + 1}`}`
   );
   lines.push(`- cloud: ${CLOUD_DESCRIPTION}`);
+  const firstName = tiers[0]?.name ?? "cloud";
   const names = [...tiers.map((tier) => tier.name), "cloud"].join(" | ");
   return `You are the router of a local AI CLI. Classify the user's request and rewrite it.
 
 Tiers (in escalation order; each maps to a model the user configured):
 ${lines.join("\n")}
 
-Respond with ONLY a JSON object where "tier" is the string "${names.split(" | ")[0]}" — exactly one of these tier names, never a list:
+Respond with ONLY a JSON object where "tier" is the string "${firstName}" — exactly one of these tier names, never a list:
 {"tier": "${names}", "reason": "one short sentence", "improved_prompt": "the user's intent, rewritten to be clearer and more complete"}
 
 The improved_prompt must preserve the user's intent exactly; never add tasks they did not ask for. If the user asks for an ACTION — to run a command, read a file, list a directory, or fetch a URL — the improved_prompt must request that exact action to be performed, not a description or explanation of it. Preserve exact text the user wants repeated or echoed (e.g. "reply with exactly ...") verbatim.`;
@@ -105,16 +106,6 @@ function normalizeTier(
   tiers: readonly TierInfo[],
 ): Tier | null {
   if (tier === "mistral" || tier === "claude") return "cloud";
-  // Legacy, model-size-derived names map onto the first three positions.
-  const legacy: Record<string, number> = {
-    local3b: 0,
-    local8b: 1,
-    local14b: 2,
-  };
-  const legacyIndex = legacy[tier];
-  if (legacyIndex !== undefined) {
-    return tiers[legacyIndex]?.name ?? null;
-  }
   return tiers.some((t) => t.name === tier) ? tier : null;
 }
 

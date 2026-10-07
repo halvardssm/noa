@@ -1,8 +1,10 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { createGate, expandTilde, screenCurlArgs } from "../src/tools.ts";
-import { withEnv, withErrors } from "./helpers.ts";
+import { createGate, expandTilde, screenCurlArgs } from "../src/lib/tools.ts";
+import { withEnv, withLogRecords } from "./helpers.ts";
 
-async function tempWorkspace(): Promise<{ dir: string; cleanup: () => Promise<void> }> {
+async function tempWorkspace(): Promise<
+  { dir: string; cleanup: () => Promise<void> }
+> {
   const dir = await Deno.makeTempDir({ prefix: "noa-gate-" });
   return {
     dir,
@@ -13,15 +15,15 @@ async function tempWorkspace(): Promise<{ dir: string; cleanup: () => Promise<vo
 Deno.test("gate: runs an allowlisted command and captures output", async () => {
   const ws = await tempWorkspace();
   try {
-    await withErrors(async (logged) => {
+    await withLogRecords(async (records) => {
       const gate = await createGate({
         allowTools: ["echo", "cat"],
         allowPaths: [ws.dir],
-        debug: true,
       });
       const result = await gate.run("echo", ["hello"]);
       assertEquals(result.code, 0);
       assertEquals(result.stdout.trim(), "hello");
+      const logged = records.map((r) => r.message.join(""));
       assert(logged.some((l) => l.includes("echo")));
     });
   } finally {
@@ -36,8 +38,16 @@ Deno.test("gate: rejects a command outside the allowlist", async () => {
       allowTools: ["ls"],
       allowPaths: [ws.dir],
     });
-    await assertRejects(() => gate.run("rm", ["x"]), Error, "not in the allowlist");
-    await assertRejects(() => gate.run("git", ["status"]), Error, "not in the allowlist");
+    await assertRejects(
+      () => gate.run("rm", ["x"]),
+      Error,
+      "not in the allowlist",
+    );
+    await assertRejects(
+      () => gate.run("git", ["status"]),
+      Error,
+      "not in the allowlist",
+    );
   } finally {
     await ws.cleanup();
   }
@@ -106,7 +116,11 @@ Deno.test("gate: rejects a symlink inside the workspace pointing outside", async
       allowTools: ["cat"],
       allowPaths: [ws.dir],
     });
-    await assertRejects(() => gate.run("cat", [`${ws.dir}/leak`]), Error, "symlink");
+    await assertRejects(
+      () => gate.run("cat", [`${ws.dir}/leak`]),
+      Error,
+      "symlink",
+    );
   } finally {
     await ws.cleanup();
     await Deno.remove(outside);
@@ -171,16 +185,16 @@ Deno.test("gate: rejects a tilde argument outside the workspace", async () => {
   }
 });
 
-Deno.test("gate: logs rejections to stderr", async () => {
+Deno.test("gate: logs rejections", async () => {
   const ws = await tempWorkspace();
   try {
-    await withErrors(async (logged) => {
+    await withLogRecords(async (records) => {
       const gate = await createGate({
         allowTools: ["cat"],
         allowPaths: [ws.dir],
-        debug: true,
       });
       await assertRejects(() => gate.run("rm", ["-rf", "/"]));
+      const logged = records.map((r) => r.message.join(""));
       assert(logged.some((l) => l.includes("rejected") && l.includes("rm")));
     });
   } finally {
@@ -195,7 +209,9 @@ Deno.test("gate: reports the command's exit code and stderr", async () => {
       allowTools: ["cat"],
       allowPaths: [ws.dir],
     });
-    const result = await gate.run("cat", [`${ws.dir}/missing-but-not-a-real-path.txt`]);
+    const result = await gate.run("cat", [
+      `${ws.dir}/missing-but-not-a-real-path.txt`,
+    ]);
     assert(result.code !== 0);
     assert(result.stderr.length > 0);
   } finally {
@@ -208,13 +224,25 @@ Deno.test("screenCurlArgs: rejects method, body, and upload arguments", () => {
   assertEquals(screenCurlArgs(["-X", "GET", "https://example.com"]), null);
   assertEquals(screenCurlArgs(["--request", "get", "https://x.test"]), null);
   assertEquals(screenCurlArgs(["-X", "POST", "https://x.test"]), "-X POST");
-  assertEquals(screenCurlArgs(["--request", "PUT", "https://x.test"]), "--request PUT");
+  assertEquals(
+    screenCurlArgs(["--request", "PUT", "https://x.test"]),
+    "--request PUT",
+  );
   assertEquals(screenCurlArgs(["-d", "a=b", "https://x.test"]), "-d");
   assertEquals(screenCurlArgs(["--data", "a=b", "https://x.test"]), "--data");
-  assertEquals(screenCurlArgs(["--data-raw", "x", "https://x.test"]), "--data-raw");
-  assertEquals(screenCurlArgs(["--data-urlencode", "x", "https://x.test"]), "--data-urlencode");
+  assertEquals(
+    screenCurlArgs(["--data-raw", "x", "https://x.test"]),
+    "--data-raw",
+  );
+  assertEquals(
+    screenCurlArgs(["--data-urlencode", "x", "https://x.test"]),
+    "--data-urlencode",
+  );
   assertEquals(screenCurlArgs(["-T", "file", "https://x.test"]), "-T");
-  assertEquals(screenCurlArgs(["--upload-file", "f", "https://x.test"]), "--upload-file");
+  assertEquals(
+    screenCurlArgs(["--upload-file", "f", "https://x.test"]),
+    "--upload-file",
+  );
   assertEquals(screenCurlArgs(["-F", "a=b", "https://x.test"]), "-F");
   assertEquals(screenCurlArgs(["--form", "a=b", "https://x.test"]), "--form");
   assertEquals(screenCurlArgs(["-dpayload", "https://x.test"]), "-dpayload");
@@ -259,19 +287,17 @@ Deno.test("gate: rm requires approval even when allowlisted — a declined confi
   const ws = await tempWorkspace();
   try {
     await Deno.writeTextFile(`${ws.dir}/notes.txt`, "x");
-    await withEnv({ NOA_TEST: "1", NOA_TEST_CONFIRM: "n" }, async () => {
-      const gate = await createGate({
-        allowTools: ["rm"],
-        allowPaths: [ws.dir],
-      });
-      await assertRejects(
-        () => gate.run("rm", [`${ws.dir}/notes.txt`]),
-        Error,
-        "not approved",
-      );
-      // The confirmation was consumed once.
-      assertEquals(Deno.env.get("NOA_TEST_CONFIRM"), "");
+    // Without NOA_TEST the global confirm dialog answers itself false
+    // on a non-interactive stdin, so approval is always declined.
+    const gate = await createGate({
+      allowTools: ["rm"],
+      allowPaths: [ws.dir],
     });
+    await assertRejects(
+      () => gate.run("rm", [`${ws.dir}/notes.txt`]),
+      Error,
+      "not approved",
+    );
     assert(await exists(`${ws.dir}/notes.txt`), "the file is untouched");
   } finally {
     await ws.cleanup();
@@ -283,7 +309,7 @@ Deno.test("gate: rm with approval runs and stays screened", async () => {
   const outside = await Deno.makeTempFile({ prefix: "noa-outside-" });
   try {
     await Deno.writeTextFile(`${ws.dir}/notes.txt`, "x");
-    await withEnv({ NOA_TEST: "1", NOA_TEST_CONFIRM: "y" }, async () => {
+    await withEnv({ NOA_TEST: "1" }, async () => {
       const gate = await createGate({
         allowTools: ["rm"],
         allowPaths: [ws.dir],
@@ -305,10 +331,10 @@ Deno.test("gate: rm with approval runs and stays screened", async () => {
   }
 });
 
-Deno.test("gate: rm with an exhausted confirm queue is always rejected", async () => {
+Deno.test("gate: rm without a terminal is always rejected", async () => {
   const ws = await tempWorkspace();
   try {
-    await withEnv({ NOA_TEST: "1", NOA_TEST_CONFIRM: "" }, async () => {
+    {
       const gate = await createGate({
         allowTools: ["rm"],
         allowPaths: [ws.dir],
@@ -318,7 +344,7 @@ Deno.test("gate: rm with an exhausted confirm queue is always rejected", async (
         Error,
         "not approved",
       );
-    });
+    }
   } finally {
     await ws.cleanup();
   }

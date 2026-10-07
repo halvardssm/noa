@@ -1,8 +1,13 @@
-import type { ChatAnswer, ChatMessage, ToolSpec } from "./ollama.ts";
-import type { CloudProvider } from "./cloud.ts";
+import type {
+  ChatAnswer,
+  ChatMessage,
+  ToolSpec,
+} from "./providers/ollama-old.ts";
+import type { CloudProvider } from "./providers/cloud.ts";
 import type { RunResult } from "./tools.ts";
 import { judge, type Judgment, type Tier, type TierInfo } from "./judge.ts";
 import { verify } from "./verify.ts";
+import { getLogger } from "./log.ts";
 
 /** A chat function bound to a model, with JSON mode and tool support. */
 export type ChatFn = (
@@ -32,10 +37,6 @@ export const RUN_COMMAND_TOOL: ToolSpec = {
   },
 };
 
-/**
- * A model forced by `--model`: bypasses the judge, verification, and the
- * cascade entirely — the raw question goes to exactly this model.
- */
 /** Where a tier's model is served: Ollama or a cloud provider. */
 export interface TierTarget {
   /** `"ollama"`, `"mistral"`, or `"anthropic"`. */
@@ -51,7 +52,11 @@ export interface TierTarget {
  * `localN` tier); `--provider` names the cloud provider for the model.
  */
 export type ForcedTarget =
-  | { readonly kind: "cloud"; readonly provider: string; readonly model?: string }
+  | {
+    readonly kind: "cloud";
+    readonly provider: string;
+    readonly model?: string;
+  }
   | { readonly kind: "tier"; readonly tier: string }
   | { readonly kind: "model"; readonly model: string };
 
@@ -77,30 +82,28 @@ export interface CascadeDeps {
   readonly forced?: ForcedTarget;
   /** Skip the verification pass (`--no-verify`). */
   readonly noVerify?: boolean;
-  /** Log sink (stderr in the CLI). */
-  /** Log every routing decision to stderr when true. */
-  readonly debug?: boolean;
   /** Max tool rounds per local answer; defaults to 6. */
   readonly maxToolRounds?: number;
 }
 
-const AGENT_SYSTEM = `You are a local coding assistant with a run_command tool that executes allowlisted local commands (no shell). You get exactly one turn to answer: never ask the user to run something or offer to do it — just do it with the tool and report the result. You do not know the current date, time, or machine state: any question about live system information requires a command (e.g. \`date\`). Prefer acting with the tool over describing hypothetical output; the tool enforces the security rules and its rejections are final — report them honestly rather than guessing. When you already know the answer, answer directly in plain text.`;
+const logger = getLogger(["noa", "router"]);
+
+const AGENT_SYSTEM =
+  `You are a local coding assistant with a run_command tool that executes allowlisted local commands (no shell). You get exactly one turn to answer: never ask the user to run something or offer to do it — just do it with the tool and report the result. You do not know the current date, time, or machine state: any question about live system information requires a command (e.g. \`date\`). Prefer acting with the tool over describing hypothetical output; the tool enforces the security rules and its rejections are final — report them honestly rather than guessing. When you already know the answer, answer directly in plain text.`;
 
 /**
  * Routes a question through the cascade:
  * judge → local tier (with tools) → verify → escalate → cloud.
- * Returns the final answer; logs every routing decision to stderr
- * when `debug` is set.
+ * Returns the final answer; logs every routing decision at the
+ * `debug` level.
  */
 export async function cascade(
   question: string,
   deps: CascadeDeps,
 ): Promise<string> {
-  const log = deps.debug === true
-    ? (message: string) => console.error(message)
-    : () => {};
+  const log = (message: string) => logger.debug(message);
   const clouds = deps.clouds ?? [];
-  const localTiers = deps.localTiers ?? [];
+  const localTiers = deps.localTiers;
   const targets = deps.tierTargets ?? {};
 
   // Logs show the model, not the positional tier name; a tier without a
@@ -108,7 +111,7 @@ export async function cascade(
   const tierLabel = (tier: string): string => {
     const target = targets[tier];
     if (target === undefined) return tier;
-    return target.provider === undefined || target.provider === "ollama"
+    return target.provider === "ollama"
       ? target.model
       : `${target.model} via ${target.provider}`;
   };
@@ -136,7 +139,7 @@ export async function cascade(
     if (forced.kind === "tier") {
       if (!localTiers.includes(forced.tier)) {
         throw new Error(
-          `${forced.tier} is not configured — check the models list in config.json or force another tier`,
+          `${forced.tier} is not configured — check the rules list in config.json or force another tier`,
         );
       }
       chat = deps.chatFor(forced.tier);
@@ -169,7 +172,7 @@ export async function cascade(
       );
     }
     log("no local models configured — routing to cloud with the raw question");
-    return cloudChain(question, clouds, undefined, log);
+    return cloudChain(question, clouds, log);
   }
 
   let judgment: Judgment;
@@ -208,12 +211,15 @@ export async function cascade(
     ? ` model=${targets[judgment.tier].model}`
     : "";
   log(
-    `judge: tier=${judgment.tier}${judgedModel} reason=${judgment.reason || "(none)"} improved="${judgment.improvedPrompt}"`,
+    `judge: tier=${judgment.tier}${judgedModel} reason=${
+      judgment.reason || "(none)"
+    } improved="${judgment.improvedPrompt}"`,
   );
 
   // The implicit final cloud tier only exists when no configured tier is a
   // cloud model — otherwise the user's list already ends wherever they chose.
-  const hasCloudTier = localTiers.some((tier) => targets[tier] !== undefined &&
+  const hasCloudTier = localTiers.some((tier) =>
+    targets[tier] !== undefined &&
     targets[tier].provider !== "ollama"
   );
   const plan = planTiers(judgment.tier, localTiers, !hasCloudTier);
@@ -226,7 +232,7 @@ export async function cascade(
           "no local model passed verification and no cloud provider is configured — export MISTRAL_API_KEY (or ANTHROPIC_API_KEY) in your shell",
         );
       }
-      return cloudChain(judgment.improvedPrompt, clouds, undefined, log);
+      return cloudChain(judgment.improvedPrompt, clouds, log);
     }
 
     const target = targets[tier];
@@ -310,12 +316,9 @@ export function planTiers(
 async function cloudChain(
   prompt: string,
   clouds: readonly CloudProvider[],
-  forcedCloud: string | undefined,
   log: (message: string) => void,
 ): Promise<string> {
-  const chain = forcedCloud !== undefined
-    ? clouds.filter((p) => p.name === forcedCloud)
-    : clouds;
+  const chain = clouds;
   const failures: string[] = [];
   for (const provider of chain) {
     log(`cloud: ${provider.name} (answer is final, no verification)`);
@@ -345,7 +348,11 @@ async function agentLoop(
   for (let round = 0; round < maxRounds; round++) {
     const answer = await chat(messages, { tools: [RUN_COMMAND_TOOL] });
     if (answer.toolCalls.length === 0) return answer.content;
-    messages.push({ role: "assistant", content: answer.content, toolCalls: answer.toolCalls });
+    messages.push({
+      role: "assistant",
+      content: answer.content,
+      toolCalls: answer.toolCalls,
+    });
     for (const call of answer.toolCalls) {
       if (call.name !== "run_command") {
         messages.push({

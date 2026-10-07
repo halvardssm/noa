@@ -4,7 +4,8 @@
  * request passes through here — allowlist check, argument path screening,
  * curl method screening, and a log of every decision.
  */
-import { confirm, isTestMode } from "./terminal.ts";
+import { confirm, isInteractive, isWithin } from "./utils.ts";
+import { getLogger } from "./log.ts";
 
 /** Rejection reason, safe to show the model and the user. */
 export class GateError extends Error {
@@ -22,8 +23,6 @@ export interface GateSettings {
   readonly allowPaths: readonly string[];
   /** Working directory for resolving relative arguments; defaults to cwd. */
   readonly cwd?: string;
-  /** Log every decision to stderr when true. */
-  readonly debug?: boolean;
 }
 
 /** The result of a run command. */
@@ -48,10 +47,6 @@ export function expandTilde(value: string, home: string): string {
   if (value === "~") return home;
   if (value.startsWith("~/")) return `${home}/${value.slice(2)}`;
   return value;
-}
-
-function isWithin(child: string, root: string): boolean {
-  return child === root || child.startsWith(`${root}/`);
 }
 
 async function realPathOrNull(path: string): Promise<string | null> {
@@ -117,13 +112,13 @@ export function screenCurlArgs(args: readonly string[]): string | null {
   return null;
 }
 
+const logger = getLogger(["noa", "gate"]);
+
 /** Creates a gate. Throws `GateError` on invalid allowlist entries. */
 export async function createGate(settings: GateSettings): Promise<Gate> {
   const home = Deno.env.get("HOME") ?? "";
   const cwd = settings.cwd ?? Deno.cwd();
-  const log = settings.debug === true
-    ? (message: string) => console.error(message)
-    : () => {};
+  const log = (message: string) => logger.debug(message);
 
   // Real roots: the allowed paths as they exist on disk. A path that does
   // not exist can contain no files, so only existing roots gate real paths.
@@ -185,7 +180,7 @@ export async function createGate(settings: GateSettings): Promise<Gate> {
       if (!allowSet.has(base)) {
         log(`rejected: ${command} ${args.join(" ")} (not in the allowlist)`);
         throw new GateError(
-          `"${base}" is not in the allowlist — no tools are configured; tell the user to pass --allow-tools <cmds> or set NOA_TOOLS in config.json`,
+          `"${base}" is not in the allowlist — no tools are configured; tell the user to pass --allow-tools <cmds>`,
         );
       }
       if (base === "curl") {
@@ -206,7 +201,7 @@ export async function createGate(settings: GateSettings): Promise<Gate> {
           `Do you permit the agent to use 'rm' for the command '${base} ${
             args.join(" ")
           }'?`,
-        ) && (isTestMode() || Deno.stdin.isTerminal());
+        ) && isInteractive();
         if (!approved) {
           log(`rejected: ${command} ${args.join(" ")} (rm not approved)`);
           throw new GateError(

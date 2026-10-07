@@ -1,23 +1,40 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@logtape/logtape@*": "2.4.0",
+    "jsr:@logtape/logtape@^2.4.0": "2.4.0",
     "jsr:@std/assert@^1.0.13": "1.0.19",
+    "jsr:@std/async@^1.5.1": "1.5.1",
     "jsr:@std/cli@1": "1.0.32",
     "jsr:@std/cli@^1.0.32": "1.0.32",
     "jsr:@std/dotenv@~0.225.8": "0.225.8",
     "jsr:@std/fmt@^1.0.10": "1.0.10",
+    "jsr:@std/fs@1": "1.0.24",
+    "jsr:@std/fs@^1.0.24": "1.0.24",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/internal@^1.0.14": "1.0.14",
+    "jsr:@std/path@1": "1.1.6",
+    "jsr:@std/path@^1.1.5": "1.1.6",
+    "jsr:@std/path@^1.1.6": "1.1.6",
     "jsr:@std/text@1": "1.1.0",
     "jsr:@stdx/cli@~0.1.1": "0.1.1",
-    "jsr:@zod/zod@^4.1.12": "4.6.5"
+    "jsr:@stdx/fs@~0.1.1": "0.1.1",
+    "jsr:@zod/zod@^4.1.12": "4.6.5",
+    "npm:ollama@0.6.4": "0.6.4",
+    "npm:ollama@~0.6.4": "0.6.4"
   },
   "jsr": {
+    "@logtape/logtape@2.4.0": {
+      "integrity": "938199249d69a5b173b94eb9972e27d2f7c182af10e622a5293920fa6e090185"
+    },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
         "jsr:@std/internal@^1.0.12"
       ]
+    },
+    "@std/async@1.5.1": {
+      "integrity": "c82455dc70cab29a0adf3ac8075db934785bffdd3902af5afcf25d21a74cfd86"
     },
     "@std/cli@1.0.32": {
       "integrity": "188b3a100d6202d64e3f5bd3d799c7fa4f6d77f92cc65eb7f641c1fa0aa92a66",
@@ -32,8 +49,21 @@
     "@std/fmt@1.0.10": {
       "integrity": "90dfba288802ac6de82fb31d0917eb9e4450b9925b954d5e51fc29ac07419db5"
     },
+    "@std/fs@1.0.24": {
+      "integrity": "f3061b45b81673a2bece689da041df32d174be064c89eb6397fb5718d3fb7877",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.14",
+        "jsr:@std/path@^1.1.5"
+      ]
+    },
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    },
+    "@std/path@1.1.6": {
+      "integrity": "c68485c2a4dfbb5ae3cc74fae4e8c4e5d874cf8a8ed12927917235c758b46cbe",
+      "dependencies": [
+        "jsr:@std/internal@^1.0.14"
+      ]
     },
     "@std/text@1.1.0": {
       "integrity": "3db511996317f63e35b76fe18fe35249723ae0ff6f8305398c78dd64ffa809a7"
@@ -45,17 +75,41 @@
         "jsr:@std/text"
       ]
     },
+    "@stdx/fs@0.1.1": {
+      "integrity": "d8ea47866c13e4ef05abaa500a00e15ce0dc9e0c10728765ec1d48535899b825",
+      "dependencies": [
+        "jsr:@std/fs@1",
+        "jsr:@std/path@1"
+      ]
+    },
     "@zod/zod@4.6.5": {
       "integrity": "de9ee54513b84efecbdf2988f5a01eca0e2883be4b5625cf320bc0d6dbbade3e"
     }
   },
+  "npm": {
+    "ollama@0.6.4": {
+      "integrity": "sha512-KzM6b5Sq0TgipeMTdImuELr/V4eNqrTf37PRzUTHCPPieFmboYw6qPn+pX7+lg0nSP1jsKwy4AFkiQFXhqHeZA==",
+      "dependencies": [
+        "whatwg-fetch"
+      ]
+    },
+    "whatwg-fetch@3.6.20": {
+      "integrity": "sha512-EqhiFU6daOA8kpjOWTL0olhVOF3i7OrFzSYiGsEMB8GcXS+RrzauAERX65xMeNWVqxA6HXH2m69Z9LaKKdisfg=="
+    }
+  },
   "workspace": {
     "dependencies": [
+      "jsr:@logtape/logtape@^2.4.0",
       "jsr:@std/assert@^1.0.13",
+      "jsr:@std/async@^1.5.1",
       "jsr:@std/cli@^1.0.32",
       "jsr:@std/dotenv@~0.225.8",
+      "jsr:@std/fs@^1.0.24",
+      "jsr:@std/path@^1.1.6",
       "jsr:@stdx/cli@~0.1.1",
-      "jsr:@zod/zod@^4.1.12"
+      "jsr:@stdx/fs@~0.1.1",
+      "jsr:@zod/zod@^4.1.12",
+      "npm:ollama@~0.6.4"
     ]
   }
 }

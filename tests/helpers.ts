@@ -1,9 +1,12 @@
+import { configure, dispose, type LogRecord } from "@logtape/logtape";
+
 /**
  * Shared test scaffolding. Production code reads ambient state directly
  * (`fetch`, `Deno.env`, `console`), so tests drive it with global stubs and
- * env vars — never with injected functions. `NOA_TEST=1` additionally
- * scripts terminal prompts (`NOA_TEST_CONFIRM`, `NOA_TEST_SELECT`) and
- * the systems check (`NOA_TEST_RAM_GB`); see src/terminal.ts.
+ * env vars — never with injected functions. `NOA_TEST=1` switches the
+ * interactive helpers to hardcoded answers (confirm approves, menus pick
+ * the first option) and the systems check to a hardcoded 16 GiB; see
+ * src/lib/utils.ts and src/lib/system.ts.
  */
 
 /** The part of `Response` noa's code paths use. */
@@ -47,6 +50,31 @@ export function ndjsonResponse(
       },
     }),
   };
+}
+
+/**
+ * Configures LogTape with a capturing sink (trace level) for the
+ * duration of `fn`, then disposes. `records` receives every record
+ * noa logs; `record.message.join("")` is the formatted message.
+ */
+export async function withLogRecords<T>(
+  fn: (records: LogRecord[]) => Promise<T>,
+): Promise<T> {
+  const records: LogRecord[] = [];
+  await configure({
+    // Tests reconfigure per case; `reset` replaces the previous setup.
+    reset: true,
+    sinks: { test: (record) => records.push(record) },
+    loggers: [
+      { category: [], sinks: ["test"], lowestLevel: "trace" },
+      { category: ["logtape", "meta"], sinks: [], lowestLevel: "fatal" },
+    ],
+  });
+  try {
+    return await fn(records);
+  } finally {
+    await dispose();
+  }
 }
 
 /** Sets `env` for the duration of `fn`, restoring (or deleting) after. */

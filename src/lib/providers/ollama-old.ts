@@ -68,7 +68,10 @@ interface OllamaMessage {
 
 /** Maps a ChatMessage to Ollama's wire format (tool_calls, tool_name). */
 function toWire(message: ChatMessage): Record<string, unknown> {
-  const wire: Record<string, unknown> = { role: message.role, content: message.content };
+  const wire: Record<string, unknown> = {
+    role: message.role,
+    content: message.content,
+  };
   if (message.toolCalls !== undefined) wire.tool_calls = message.toolCalls;
   if (message.toolName !== undefined) wire.tool_name = message.toolName;
   return wire;
@@ -123,21 +126,10 @@ export async function ollamaChat(
     toolCalls.push({
       name: call.function.name,
       args: (typeof args === "object" && args !== null ? args : {}) as Record<
-        string, unknown
+        string,
+        unknown
       >,
     });
   }
   return { content: message.content ?? "", toolCalls };
-}
-
-/** Whether the Ollama daemon answers at `baseUrl`. */
-export async function ollamaIsUp(
-  baseUrl = OLLAMA_BASE_URL,
-): Promise<boolean> {
-  try {
-    const response = await fetch(`${baseUrl}/api/tags`);
-    return response.ok;
-  } catch {
-    return false;
-  }
 }

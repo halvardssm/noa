@@ -2,6 +2,12 @@
  * A cloud provider (the cascade's final tier). Adding a provider is a
  * one-file job: implement this interface and register it.
  */
+/** The default Mistral model, used when no override is configured. */
+export const DEFAULT_MISTRAL_MODEL = "mistral-large-latest";
+
+/** The default Anthropic model, used when no override is configured. */
+export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5";
+
 export interface CloudProvider {
   readonly name: string;
   /** The environment variable this provider reads its key from. */
@@ -46,7 +52,7 @@ export async function mistralChat(options: MistralOptions): Promise<string> {
     );
   }
   const body = {
-    model: options.model ?? "mistral-large-latest",
+    model: options.model ?? DEFAULT_MISTRAL_MODEL,
     messages: [{ role: "user", content: options.prompt }],
   };
   let response;
@@ -110,7 +116,7 @@ export async function anthropicChat(
     );
   }
   const body = {
-    model: options.model ?? "claude-sonnet-4-5",
+    model: options.model ?? DEFAULT_ANTHROPIC_MODEL,
     max_tokens: 1024,
     messages: [{ role: "user", content: options.prompt }],
   };
