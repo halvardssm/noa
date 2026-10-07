@@ -4,6 +4,7 @@
  * request passes through here — allowlist check, argument path screening,
  * curl method screening, and a log of every decision.
  */
+import { confirm, isTestMode } from "./terminal.ts";
 
 /** Rejection reason, safe to show the model and the user. */
 export class GateError extends Error {
@@ -19,20 +20,10 @@ export interface GateSettings {
   readonly allowTools: readonly string[];
   /** Resolved allowed paths (may contain `~` or relative segments). */
   readonly allowPaths: readonly string[];
-  /** Home directory for `~` expansion; defaults to `$HOME`. */
-  readonly homeDir?: string;
   /** Working directory for resolving relative arguments; defaults to cwd. */
   readonly cwd?: string;
-  /** Sink for the invocation log (stderr in the CLI). */
-  readonly log?: (message: string) => void;
-  /**
-   * Interactive approval for `rm` runs (security rule 4): returns whether
-   * the user approved. When absent, `rm` is always rejected.
-   */
-  readonly approveRm?: (
-    command: string,
-    args: readonly string[],
-  ) => Promise<boolean>;
+  /** Log every decision to stderr when true. */
+  readonly debug?: boolean;
 }
 
 /** The result of a run command. */
@@ -128,9 +119,11 @@ export function screenCurlArgs(args: readonly string[]): string | null {
 
 /** Creates a gate. Throws `GateError` on invalid allowlist entries. */
 export async function createGate(settings: GateSettings): Promise<Gate> {
-  const home = settings.homeDir ?? Deno.env.get("HOME") ?? "";
+  const home = Deno.env.get("HOME") ?? "";
   const cwd = settings.cwd ?? Deno.cwd();
-  const log = settings.log ?? (() => {});
+  const log = settings.debug === true
+    ? (message: string) => console.error(message)
+    : () => {};
 
   // Real roots: the allowed paths as they exist on disk. A path that does
   // not exist can contain no files, so only existing roots gate real paths.
@@ -207,13 +200,17 @@ export async function createGate(settings: GateSettings): Promise<Gate> {
       await screenArgs(command, args);
       if (base === "rm") {
         // Rule 4: rm needs interactive approval for every single run —
-        // and approval never overrides the screening above.
-        const approved = settings.approveRm !== undefined &&
-          await settings.approveRm(command, args);
+        // and approval never overrides the screening above. A
+        // non-interactive session can never approve.
+        const approved = confirm(
+          `Do you permit the agent to use 'rm' for the command '${base} ${
+            args.join(" ")
+          }'?`,
+        ) && (isTestMode() || Deno.stdin.isTerminal());
         if (!approved) {
           log(`rejected: ${command} ${args.join(" ")} (rm not approved)`);
           throw new GateError(
-            `"rm" requires interactive approval (retype the exact command) — not approved`,
+            `"rm" requires interactive approval — not approved`,
           );
         }
       }

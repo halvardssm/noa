@@ -71,10 +71,10 @@ export function isUnderHome(path: string, home: string): boolean {
 }
 
 /** The directory holding noa config: `NOA_HOME` or `~/.config/noa`. */
-export function configHome(env: { get(name: string): string | undefined }): string {
-  const override = env.get("NOA_HOME");
+export function configHome(): string {
+  const override = Deno.env.get("NOA_HOME");
   if (override !== undefined && override !== "") return override;
-  const home = env.get("HOME");
+  const home = Deno.env.get("HOME");
   if (home === undefined) {
     throw new Error("HOME is not set; cannot resolve the config directory");
   }
@@ -82,13 +82,13 @@ export function configHome(env: { get(name: string): string | undefined }): stri
 }
 
 /** The path of the JSON config file. */
-export function configPath(env: { get(name: string): string | undefined }): string {
-  return `${configHome(env)}/config.json`;
+export function configPath(): string {
+  return `${configHome()}/config.json`;
 }
 
 /** The path of the legacy `.env` config file (migrated on first load). */
-export function legacyEnvPath(env: { get(name: string): string | undefined }): string {
-  return `${configHome(env)}/.env`;
+export function legacyEnvPath(): string {
+  return `${configHome()}/.env`;
 }
 
 /** Reads the JSON config file, returning `{}` when it does not exist. */

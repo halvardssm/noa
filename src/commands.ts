@@ -1,9 +1,10 @@
-import { defineCommand, runCommand, UsageError } from "@stdx/cli";
+import { defineCommand, UsageError } from "@stdx/cli/command";
+import denoConfig from "../deno.json" with { type: "json" };
 import { promptSecret } from "@std/cli/prompt-secret";
+import { createApp } from "./app.ts";
 import {
   configPath,
   ensureConfig,
-  isSecretKey,
   legacyEnvPath,
   loadConfig,
   maskValue,
@@ -11,54 +12,19 @@ import {
   SUGGESTED_TOOLS,
   unsetConfigValue,
 } from "./config.ts";
-import { createApp } from "./app.ts";
-import { runSetup, type SetupInteract } from "./setup.ts";
-
-const VERSION = "0.1.0";
-
-/**
- * Reads one visible line from stdin (the terminal echoes as the user
- * types). Returns null on EOF.
- */
-async function readLine(): Promise<string | null> {
-  const decoder = new TextDecoder();
-  const buffer = new Uint8Array(1);
-  let line = "";
-  while (true) {
-    const read = await Deno.stdin.read(buffer);
-    if (read === null) return line.trim() === "" ? null : line.trim();
-    if (buffer[0] === 10) break;
-    line += decoder.decode(buffer);
-  }
-  return line.trim();
-}
-
-/** Terminal-backed setup interaction. */
-const terminalInteract: SetupInteract = {
-  confirm: (message) => {
-    const answer = prompt(`${message} [y/N]`) ?? "";
-    return /^(y|yes)$/i.test(answer.trim());
-  },
-  text: (message) => {
-    return prompt(message);
-  },
-};
+import { runRepl } from "./lib/io.ts";
+import { runSetup } from "./setup.ts";
 
 const setup = defineCommand({
   name: "setup",
   description: "Interactive first-time setup (models, memory cap)",
-  async run(context) {
+  async run() {
     if (!Deno.stdin.isTerminal()) {
       throw new UsageError(
         "noa setup is interactive — run it in a terminal (or pull models directly: ollama pull ministral-3:3b)",
       );
     }
-    const code = await runSetup({
-      env: Deno.env,
-      interact: terminalInteract,
-      out: (line) => context.stdout(line),
-    });
-    return code;
+    return await runSetup();
   },
 });
 
@@ -80,7 +46,7 @@ const configSet = defineCommand({
       }
       value = await promptSecret(`Value for ${key}:`) ?? "";
     }
-    await setConfigValue(configPath(Deno.env), key, value);
+    await setConfigValue(configPath(), key, value);
     context.stderr(`set ${key}`);
   },
 });
@@ -91,7 +57,7 @@ const configGet = defineCommand({
   options: { show: { type: "boolean", description: "reveal secrets" } },
   args: [{ name: "key", required: true }],
   async run(context) {
-    const config = await loadConfig(configPath(Deno.env));
+    const config = await loadConfig(configPath());
     const key = context.args.key;
     const value = config[key];
     if (typeof value !== "string") {
@@ -107,7 +73,7 @@ const configList = defineCommand({
   description: "List all settings (values masked)",
   options: { show: { type: "boolean", description: "reveal secrets" } },
   async run(context) {
-    const config = await loadConfig(configPath(Deno.env));
+    const config = await loadConfig(configPath());
     for (const [key, value] of Object.entries(config)) {
       if (Array.isArray(value)) {
         context.stdout(`${key}=${JSON.stringify(value)}`);
@@ -126,7 +92,7 @@ const configUnset = defineCommand({
   args: [{ name: "key", required: true }],
   async run(context) {
     const removed = await unsetConfigValue(
-      configPath(Deno.env),
+      configPath(),
       context.args.key,
     );
     context.stderr(
@@ -173,71 +139,18 @@ const questionOptions = {
   },
 };
 
-/**
- * An interactive session: one question per line, each routed through the
- * cascade independently; `exit`/`quit` or Ctrl-D ends it. Answers go to
- * stdout, routing logs and the prompt to stderr. Per-question errors are
- * reported and the session continues.
- */
-async function runRepl(
-  flags: {
-    model?: string;
-    provider?: string;
-    allowTools?: string;
-    allowPaths?: string;
-    noVerify?: boolean;
-    debug?: boolean;
-  },
-  stderrLine: (message: string) => void,
-  stdout: (line: string) => void,
-): Promise<number> {
-  await ensureConfig(configPath(Deno.env), legacyEnvPath(Deno.env));
-  const config = await loadConfig(configPath(Deno.env));
-  const debugLog = flags.debug === true ? stderrLine : () => {};
-  const app = await createApp({
-    env: Deno.env,
-    fileValues: config,
-    allowToolsFlag: flags.allowTools,
-    allowPathsFlag: flags.allowPaths,
-    model: flags.model,
-    provider: flags.provider,
-    noVerify: flags.noVerify,
-    approveRm: interactiveRmApproval,
-    onLog: debugLog,
-  });
-  stderrLine("noa repl — one question per line; exit or Ctrl-D to quit");
-  const prompt = new TextEncoder().encode("> ");
-  while (true) {
-    Deno.stderr.writeSync(prompt);
-    const line = await readLine();
-    if (line === null) break;
-    if (line === "") continue;
-    if (/^(\/?)?(exit|quit)$/i.test(line)) break;
-    try {
-      stdout(await app.ask(line));
-    } catch (error) {
-      stderrLine(error instanceof Error ? error.message : String(error));
-    }
-  }
-  return 0;
-}
-
 const repl = defineCommand({
   name: "repl",
   description: "Interactive session: one question per line",
   options: questionOptions,
   async run(context) {
-    return await runRepl(
-      context.flags,
-      (message) => context.stderr(message),
-      (line) => context.stdout(line),
-    );
+    return await runRepl(context.flags);
   },
 });
 
-const root = defineCommand({
+export const rootCommand = defineCommand({
   name: "noa",
-  version: VERSION,
+  version: denoConfig.version,
   description:
     "Local-first AI CLI: the smallest sufficient model answers. Bare `noa` starts an interactive session.",
   options: {
@@ -250,58 +163,22 @@ const root = defineCommand({
   },
   commands: [config, setup, repl],
   async run(context) {
-    const stderrLine = (message: string) => context.stderr(message);
     const question = (context.flags.prompt ?? "").trim();
     if (question === "") {
-      return await runRepl(
-        context.flags,
-        stderrLine,
-        (line) => context.stdout(line),
-      );
+      return await runRepl(context.flags);
     }
-    await ensureConfig(configPath(Deno.env), legacyEnvPath(Deno.env));
-    const config = await loadConfig(configPath(Deno.env));
+    await ensureConfig(configPath(), legacyEnvPath());
+    const config = await loadConfig(configPath());
     const app = await createApp({
-      env: Deno.env,
       fileValues: config,
       allowToolsFlag: context.flags.allowTools,
       allowPathsFlag: context.flags.allowPaths,
       model: context.flags.model,
       provider: context.flags.provider,
       noVerify: context.flags.noVerify,
-      approveRm: interactiveRmApproval,
-      onLog: context.flags.debug === true ? stderrLine : () => {},
+      debug: context.flags.debug === true,
     });
     const answer = await app.ask(question);
-    context.stdout(answer);
+    console.log(answer);
   },
 });
-
-/**
- * Interactive `rm` approval (security rule 4): the exact command must be
- * retyped; anything else — including "y" — rejects. Non-interactive stdin
- * can never approve.
- */
-async function interactiveRmApproval(
-  command: string,
-  args: readonly string[],
-): Promise<boolean> {
-  if (!Deno.stdin.isTerminal()) return false;
-  const full = [command, ...args].join(" ");
-  const typed = await promptSecret(`To approve, retype exactly: ${full}`) ?? "";
-  return typed.trim() === full;
-}
-
-if (import.meta.main) {
-  try {
-    Deno.exit(await runCommand(root, Deno.args));
-  } catch (error) {
-    // Anything thrown out of a command: a clear message, never a stack trace.
-    Deno.stderr.writeSync(
-      new TextEncoder().encode(
-        `${error instanceof Error ? error.message : String(error)}\n`,
-      ),
-    );
-    Deno.exit(1);
-  }
-}

@@ -1,5 +1,3 @@
-import type { FetchFn } from "./http.ts";
-
 /** A chat message in the shape both Ollama and the cloud providers use. */
 export interface ChatMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
@@ -57,7 +55,6 @@ interface OllamaChatOptions {
   readonly numCtx?: number;
   /** Idle time before Ollama unloads the model; defaults to 5m (spec). */
   readonly keepAlive?: string;
-  readonly fetchFn?: FetchFn;
   readonly baseUrl?: string;
 }
 
@@ -84,7 +81,6 @@ function toWire(message: ChatMessage): Record<string, unknown> {
 export async function ollamaChat(
   options: OllamaChatOptions,
 ): Promise<ChatAnswer> {
-  const fetchFn = options.fetchFn ?? fetch;
   const baseUrl = options.baseUrl ?? ollamaBaseUrl();
   const body: Record<string, unknown> = {
     model: options.model,
@@ -100,7 +96,7 @@ export async function ollamaChat(
 
   let response;
   try {
-    response = await fetchFn(`${baseUrl}/api/chat`, {
+    response = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -137,10 +133,9 @@ export async function ollamaChat(
 /** Whether the Ollama daemon answers at `baseUrl`. */
 export async function ollamaIsUp(
   baseUrl = OLLAMA_BASE_URL,
-  fetchFn: FetchFn = fetch,
 ): Promise<boolean> {
   try {
-    const response = await fetchFn(`${baseUrl}/api/tags`);
+    const response = await fetch(`${baseUrl}/api/tags`);
     return response.ok;
   } catch {
     return false;

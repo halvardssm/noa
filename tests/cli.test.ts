@@ -7,7 +7,7 @@ async function runCli(
   input?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const command = new Deno.Command("deno", {
-    args: ["run", "-A", "src/main.ts", ...args],
+    args: ["run", "-A", "cli.ts", ...args],
     cwd: Deno.cwd(),
     env: {
       ...Deno.env.toObject(),

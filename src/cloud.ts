@@ -1,5 +1,3 @@
-import type { FetchFn } from "./http.ts";
-
 /**
  * A cloud provider (the cascade's final tier). Adding a provider is a
  * one-file job: implement this interface and register it.
@@ -12,16 +10,9 @@ export interface CloudProvider {
   chat(prompt: string, model?: string): Promise<string>;
 }
 
-/** Reads a secret at request time; defaults to the process environment. */
-export type ReadSecret = (name: string) => string | undefined;
-
-function envSecret(name: string): string | undefined {
-  return Deno.env.get(name);
-}
-
 /** The provider is configured when its key is present; nothing is stored. */
-export function hasKey(readSecret: ReadSecret, name: string): boolean {
-  return (readSecret(name) ?? "") !== "";
+export function hasKey(name: string): boolean {
+  return (Deno.env.get(name) ?? "") !== "";
 }
 
 /** Error carrying a user-facing remedy, without a stack trace. */
@@ -36,9 +27,6 @@ export class ProviderError extends Error {
 export interface MistralConfig {
   /** Model name; defaults to `mistral-large-latest`. */
   readonly model?: string;
-  readonly fetchFn?: FetchFn;
-  /** Reads MISTRAL_API_KEY at request time; defaults to the environment. */
-  readonly readSecret?: ReadSecret;
 }
 
 /** Settings for a single Mistral Chat Completions call. */
@@ -51,20 +39,19 @@ const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
 
 /** Calls the Mistral Chat Completions API. */
 export async function mistralChat(options: MistralOptions): Promise<string> {
-  const apiKey = (options.readSecret ?? envSecret)("MISTRAL_API_KEY") ?? "";
+  const apiKey = Deno.env.get("MISTRAL_API_KEY") ?? "";
   if (apiKey === "") {
     throw new ProviderError(
       "MISTRAL_API_KEY is not set — export it in your shell environment",
     );
   }
-  const fetchFn = options.fetchFn ?? fetch;
   const body = {
     model: options.model ?? "mistral-large-latest",
     messages: [{ role: "user", content: options.prompt }],
   };
   let response;
   try {
-    response = await fetchFn(MISTRAL_URL, {
+    response = await fetch(MISTRAL_URL, {
       method: "POST",
       headers: {
         "authorization": `Bearer ${apiKey}`,
@@ -108,9 +95,6 @@ export function mistralProvider(config: MistralConfig): CloudProvider {
 export interface AnthropicConfig {
   /** Model name; defaults to `claude-sonnet-4-5`. */
   readonly model?: string;
-  readonly fetchFn?: FetchFn;
-  /** Reads ANTHROPIC_API_KEY at request time; defaults to the environment. */
-  readonly readSecret?: ReadSecret;
 }
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -119,13 +103,12 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 export async function anthropicChat(
   options: { prompt: string } & AnthropicConfig,
 ): Promise<string> {
-  const apiKey = (options.readSecret ?? envSecret)("ANTHROPIC_API_KEY") ?? "";
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
   if (apiKey === "") {
     throw new ProviderError(
       "ANTHROPIC_API_KEY is not set — export it in your shell environment",
     );
   }
-  const fetchFn = options.fetchFn ?? fetch;
   const body = {
     model: options.model ?? "claude-sonnet-4-5",
     max_tokens: 1024,
@@ -133,7 +116,7 @@ export async function anthropicChat(
   };
   let response;
   try {
-    response = await fetchFn(ANTHROPIC_URL, {
+    response = await fetch(ANTHROPIC_URL, {
       method: "POST",
       headers: {
         "x-api-key": apiKey,

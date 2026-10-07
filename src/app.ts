@@ -13,7 +13,6 @@ import type { Tier } from "./judge.ts";
 import type { TierTarget } from "./router.ts";
 import { createGate, type Gate } from "./tools.ts";
 import { cascade, type CascadeDeps, type ChatFn, type ForcedTarget } from "./router.ts";
-import type { FetchFn } from "./http.ts";
 import type { ChatMessage, ToolSpec } from "./ollama.ts";
 
 /** The tiers of the user's cascade and their models. */
@@ -50,9 +49,7 @@ export function resolveLocalTiers(
 
 /** Options for {@linkcode createApp}. */
 export interface AppOptions {
-  /** Process environment reader. */
-  readonly env: { get(name: string): string | undefined };
-  /** Values from the config `.env` file. */
+  /** Values from the config file. */
   readonly fileValues: Record<string, unknown>;
   /** `--allow-tools` flag. */
   readonly allowToolsFlag?: string;
@@ -66,15 +63,8 @@ export interface AppOptions {
   readonly noVerify?: boolean;
   /** Working directory; the default allowed path. Defaults to cwd. */
   readonly cwd?: string;
-  /** Log sink (stderr in the CLI). */
-  readonly onLog: (message: string) => void;
-  /** Interactive `rm` approval; absent means `rm` is always rejected. */
-  readonly approveRm?: (
-    command: string,
-    args: readonly string[],
-  ) => Promise<boolean>;
-  /** Fetch implementation for the model providers. */
-  readonly fetchFn?: FetchFn;
+  /** Log routing decisions and tool runs to stderr when true. */
+  readonly debug?: boolean;
 }
 
 /** A wired application: resolved settings plus the cascade entry point. */
@@ -92,6 +82,9 @@ export interface App {
 /** Assembles settings, gate, providers, and the cascade. */
 export async function createApp(options: AppOptions): Promise<App> {
   const cwd = options.cwd ?? Deno.cwd();
+  const log = options.debug === true
+    ? (message: string) => console.error(message)
+    : () => {};
   const allowTools = resolveList({
     flag: options.allowToolsFlag,
     file: stringSetting(options.fileValues, "NOA_TOOLS"),
@@ -106,14 +99,14 @@ export async function createApp(options: AppOptions): Promise<App> {
   });
 
   if (allowTools.length === 0) {
-    options.onLog(
+    log(
       `no tools are allowed — pass --allow-tools or set NOA_TOOLS (example: --allow-tools ${SUGGESTED_TOOLS})`,
     );
   }
   if (!pathsConfigured) {
-    const home = options.env.get("HOME");
+    const home = Deno.env.get("HOME");
     if (home !== undefined && !isUnderHome(cwd, home)) {
-      options.onLog(
+      log(
         `allowing the current directory ${cwd}, which is outside your home — set NOA_ALLOW_PATHS or pass --allow-paths to choose deliberately`,
       );
     }
@@ -122,10 +115,8 @@ export async function createApp(options: AppOptions): Promise<App> {
   const gate = await createGate({
     allowTools,
     allowPaths,
-    homeDir: options.env.get("HOME"),
     cwd: options.cwd,
-    log: options.onLog,
-    approveRm: options.approveRm,
+    debug: options.debug,
   });
 
   const localTiers = resolveLocalTiers(resolveModels(options.fileValues));
@@ -158,19 +149,15 @@ export async function createApp(options: AppOptions): Promise<App> {
         messages,
         json: chatOptions?.json,
         tools: chatOptions?.tools,
-        fetchFn: options.fetchFn,
       });
     };
 
   // Secrets are never stored: providers read their keys from the
   // environment at request time and attach them directly to the request.
-  const readSecret = (name: string): string | undefined =>
-    options.env.get(name);
-
   // Warn about legacy keys that are still sitting in the config file.
   for (const key of ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY"]) {
     if (stringSetting(options.fileValues, key) !== undefined) {
-      options.onLog(
+      log(
         `${key} in config.json is ignored — export it in your shell instead`,
       );
     }
@@ -184,20 +171,16 @@ export async function createApp(options: AppOptions): Promise<App> {
     .filter((name) => name !== "");
   const clouds: CloudProvider[] = [];
   for (const name of cloudOrder) {
-    if (name === "mistral" && hasKey(readSecret, "MISTRAL_API_KEY")) {
+    if (name === "mistral" && hasKey("MISTRAL_API_KEY")) {
       clouds.push(
         mistralProvider({
           model: stringSetting(options.fileValues, "NOA_MISTRAL_MODEL"),
-          fetchFn: options.fetchFn,
-          readSecret,
         }),
       );
-    } else if (name === "anthropic" && hasKey(readSecret, "ANTHROPIC_API_KEY")) {
+    } else if (name === "anthropic" && hasKey("ANTHROPIC_API_KEY")) {
       clouds.push(
         anthropicProvider({
           model: stringSetting(options.fileValues, "NOA_ANTHROPIC_MODEL"),
-          fetchFn: options.fetchFn,
-          readSecret,
         }),
       );
     }
@@ -213,7 +196,6 @@ export async function createApp(options: AppOptions): Promise<App> {
         messages,
         json: chatOptions?.json,
         tools: chatOptions?.tools,
-        fetchFn: options.fetchFn,
       });
 
   const mistralModel =
@@ -238,7 +220,7 @@ export async function createApp(options: AppOptions): Promise<App> {
       anthropicModel,
     ),
     noVerify: options.noVerify,
-    onLog: options.onLog,
+    debug: options.debug,
   };
 
   return {

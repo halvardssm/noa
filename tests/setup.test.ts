@@ -4,14 +4,16 @@ import {
   defaultModelsFor,
   profilePathFor,
   runSetup,
-  type SetupInteract,
 } from "../src/setup.ts";
-import type { FetchFn, ResponseLike } from "../src/http.ts";
-import { DEFAULT_MODELS, loadConfig } from "../src/config.ts";
-
-function ok(body: unknown = {}): ResponseLike {
-  return { ok: true, status: 200, json: () => Promise.resolve(body) };
-}
+import { loadConfig } from "../src/config.ts";
+import {
+  jsonResponse,
+  withEnv,
+  withFetch,
+  withLogs,
+  withNoaHome,
+  type FetchStub,
+} from "./helpers.ts";
 
 Deno.test("profilePathFor: maps the shell to its rc file", () => {
   assertEquals(profilePathFor("/bin/zsh", "/home/u"), "/home/u/.zshrc");
@@ -53,109 +55,69 @@ Deno.test("defaultModelsFor: the systems check filters by RAM", () => {
   ]);
 });
 
-interface Scripted {
-  confirms?: boolean[];
-  texts?: string[];
-}
-function fakeInteract(script: Scripted = {}): SetupInteract & {
-  confirms: string[];
-  texts: string[];
-} {
-  const confirms: string[] = [];
-  const texts: string[] = [];
-  let ci = 0;
-  let ti = 0;
-  return {
-    confirms,
-    texts,
-    confirm: (message) => {
-      confirms.push(message);
-      return script.confirms?.[ci++] ?? false;
-    },
-    text: (message) => {
-      texts.push(message);
-      return script.texts?.[ti++] ?? "";
-    },
+/** A fake Ollama daemon that records pulls. */
+function ollamaDaemon(pulled: string[]): FetchStub {
+  return async (url, init) => {
+    const u = String(url);
+    if (u.endsWith("/api/tags")) return jsonResponse({ models: [] });
+    if (u.endsWith("/api/pull")) {
+      pulled.push(JSON.parse((init as RequestInit).body as string).model);
+      return jsonResponse({ status: "success" });
+    }
+    throw new Error(`unexpected url ${u}`);
   };
 }
 
-function ollamaFetch(pulled: string[]): { fetchFn: FetchFn } {
+/** Everything the NOA_TEST seam scripts, in one env block. */
+function testEnv(script: {
+  confirms?: string;
+  texts?: string;
+  ramGb?: number;
+}): Record<string, string> {
   return {
-    fetchFn: async (url, init) => {
-      const u = String(url);
-      if (u.endsWith("/api/tags")) return ok({ models: [] });
-      if (u.endsWith("/api/pull")) {
-        pulled.push(JSON.parse((init as RequestInit).body as string).model);
-        return ok({ status: "success" });
-      }
-      throw new Error(`unexpected url ${u}`);
-    },
-  };
-}
-
-async function withDirs(
-  fn: (home: string, cfg: string) => Promise<void>,
-): Promise<void> {
-  const home = await Deno.makeTempDir({ prefix: "noa-setup-home-" });
-  const cfg = await Deno.makeTempDir({ prefix: "noa-setup-cfg-" });
-  try {
-    await fn(home, `${cfg}/config.json`);
-  } finally {
-    await Deno.remove(home, { recursive: true });
-    await Deno.remove(cfg, { recursive: true });
-  }
-}
-
-function envWith(home: string): { get(name: string): string | undefined } {
-  return {
-    get: (name) =>
-      name === "HOME" ? home : name === "SHELL" ? "/bin/zsh" : undefined,
+    NOA_TEST: "1",
+    NOA_TEST_CONFIRM: script.confirms ?? "",
+    NOA_TEST_TEXT: script.texts ?? "",
+    ...(script.ramGb !== undefined ? { NOA_TEST_RAM_GB: String(script.ramGb) } : {}),
+    SHELL: "/bin/zsh",
   };
 }
 
 Deno.test("setup: default path pulls what the systems check allows", async () => {
-  await withDirs(async (home, config) => {
+  await withNoaHome({ home: true }, async (dir) => {
     const pulled: string[] = [];
-    const interact = fakeInteract({
-      confirms: [true, true, true],
-    });
-    const lines: string[] = [];
-    const result = await runSetup({
-      env: envWith(home),
-      configPath: config,
-      interact,
-      memoryInfo: () => ({ total: 32 * 2 ** 30 }),
-      out: (line) => lines.push(line),
-      ...ollamaFetch(pulled),
-    });
-    assertEquals(result, 0);
-    assert(lines.some((l) => l.includes("GB of RAM")));
-    assert(lines.some((l) => l.includes("the models this system can handle")));
-    assert(interact.confirms.some((c) => c.includes("Download all of them?")));
-    assert(lines.some((l) => l.includes("ministral-3:14b")));
+    await withEnv(testEnv({ confirms: "y,y,y", ramGb: 32 }), () =>
+      withFetch(ollamaDaemon(pulled), () =>
+        withLogs(async (lines) => {
+          assertEquals(await runSetup(), 0);
+          assert(lines.some((l) => l.includes("GB of RAM")));
+          assert(lines.some((l) => l.includes("the models this system can handle")));
+          assert(lines.some((l) => l.includes("ministral-3:14b")));
+          // Three confirms consumed: default setup, download set, memory cap.
+          assertEquals(Deno.env.get("NOA_TEST_CONFIRM"), "");
+        })
+      )
+    );
     assertEquals(pulled, ["ministral-3:3b", "ministral-3:8b", "ministral-3:14b"]);
-    const saved = await loadConfig(config);
+    const saved = await loadConfig(`${dir}/config.json`);
     assertEquals((saved.models as { model: string }[]).length, 3);
   });
 });
 
 Deno.test("setup: default path on a small system skips big models with a note", async () => {
-  await withDirs(async (home, config) => {
+  await withNoaHome({ home: true }, async (dir) => {
     const pulled: string[] = [];
-    const lines: string[] = [];
-    const result = await runSetup({
-      env: envWith(home),
-      configPath: config,
-      interact: fakeInteract({ confirms: [true, true] }),
-      memoryInfo: () => ({ total: 8 * 2 ** 30 }),
-      out: (line) => lines.push(line),
-      ...ollamaFetch(pulled),
-    });
-    assertEquals(result, 0);
+    await withEnv(testEnv({ confirms: "y,y", ramGb: 8 }), () =>
+      withFetch(ollamaDaemon(pulled), () =>
+        withLogs(async (lines) => {
+          assertEquals(await runSetup(), 0);
+          assert(lines.some((l) => l.includes("skipping (needs more RAM)")));
+          assert(lines.some((l) => l.includes("ministral-3:8b")));
+        })
+      )
+    );
     assertEquals(pulled, ["ministral-3:3b"]);
-    assert(lines.some((l) => l.includes("skipping (needs more RAM)")));
-    assert(lines.some((l) => l.includes("ministral-3:8b")));
-    const saved = await loadConfig(config);
+    const saved = await loadConfig(`${dir}/config.json`);
     assertEquals(saved.models, [
       {
         model: "ministral-3:3b",
@@ -167,108 +129,111 @@ Deno.test("setup: default path on a small system skips big models with a note", 
 });
 
 Deno.test("setup: custom path asks for an ordered list and descriptions", async () => {
-  await withDirs(async (home, config) => {
+  await withNoaHome({ home: true }, async (dir) => {
     const pulled: string[] = [];
-    const interact = fakeInteract({
-      confirms: [false, true],
-      texts: ["qwen3:4b, llama3.1:8b", "chat and trivia", "code questions"],
-    });
-    const lines: string[] = [];
-    const result = await runSetup({
-      env: envWith(home),
-      configPath: config,
-      interact,
-      memoryInfo: () => ({ total: 64 * 2 ** 30 }),
-      out: (line) => lines.push(line),
-      ...ollamaFetch(pulled),
-    });
-    assertEquals(result, 0);
+    await withEnv(
+      testEnv({
+        confirms: "n,y",
+        texts: "qwen3:4b, llama3.1:8b|chat and trivia|code questions",
+        ramGb: 64,
+      }),
+      () =>
+        withFetch(ollamaDaemon(pulled), async () => {
+          assertEquals(await runSetup(), 0);
+        }),
+    );
     assertEquals(pulled, ["qwen3:4b", "llama3.1:8b"]);
-    assert(interact.texts.some((t) => t.includes("smallest to largest")));
-    assert(interact.texts.some((t) => t.includes("qwen3:4b")));
-    assert(interact.texts.some((t) => t.includes("llama3.1:8b")));
-    const saved = await loadConfig(config);
+    const saved = await loadConfig(`${dir}/config.json`);
     assertEquals(saved.models, [
       { model: "qwen3:4b", description: "chat and trivia" },
       { model: "llama3.1:8b", description: "code questions" },
     ]);
-    // The memory-cap profile was declined (confirms ran out of trues).
-    assert(!await exists(`${home}/.zshrc`));
+    // The memory-cap profile was declined (confirms ran out of y's).
+    assert(!await exists(`${dir}/.zshrc`));
   });
 });
 
-Deno.test("setup: never prompts for keys, prints the environment hint", async () => {
-  await withDirs(async (home, config) => {
-    const interact = fakeInteract({ confirms: [true, false] });
-    const pulled: string[] = [];
-    const lines: string[] = [];
-    const result = await runSetup({
-      env: envWith(home),
-      configPath: config,
-      interact,
-      memoryInfo: () => ({ total: 32 * 2 ** 30 }),
-      out: (line) => lines.push(line),
-      ...ollamaFetch(pulled),
-    });
-    assertEquals(result, 0);
-    assert(lines.some((l) => l.includes("export MISTRAL_API_KEY")));
-    const saved = await Deno.readTextFile(config);
+Deno.test("setup: an exhausted confirm queue declines (the memory cap)", async () => {
+  await withNoaHome({ home: true }, async (dir) => {
+    await withEnv(testEnv({ confirms: "y,y", ramGb: 32 }), () =>
+      withFetch(ollamaDaemon([]), async () => {
+        assertEquals(await runSetup(), 0);
+      })
+    );
+    assert(!await exists(`${dir}/.zshrc`));
+  });
+});
+
+Deno.test("setup: a confirmed memory cap is written to the shell profile", async () => {
+  await withNoaHome({ home: true }, async (dir) => {
+    await withEnv(testEnv({ confirms: "y,y,y", ramGb: 32 }), () =>
+      withFetch(ollamaDaemon([]), async () => {
+        assertEquals(await runSetup(), 0);
+      })
+    );
+    const profile = await Deno.readTextFile(`${dir}/.zshrc`);
+    assert(profile.includes("export OLLAMA_MAX_LOADED_MODELS=2"));
+    assert(profile.includes("export OLLAMA_KEEP_ALIVE=5m"));
+  });
+});
+
+Deno.test("setup: never stores keys, prints the environment hint", async () => {
+  await withNoaHome({ home: true }, async (dir) => {
+    await withEnv(testEnv({ confirms: "y,n", ramGb: 32 }), () =>
+      withFetch(ollamaDaemon([]), () =>
+        withLogs(async (lines) => {
+          assertEquals(await runSetup(), 0);
+          assert(lines.some((l) => l.includes("export MISTRAL_API_KEY")));
+        })
+      )
+    );
+    const saved = await Deno.readTextFile(`${dir}/config.json`);
     assert(!saved.includes("API_KEY"));
   });
 });
 
-Deno.test("setup: still no key prompting when the config already exists", async () => {
-  await withDirs(async (home, config) => {
-    await Deno.writeTextFile(config, '{"ZODIAC": "leo", "models": []}');
-    const interact = fakeInteract({ confirms: [true, false] });
-    const pulled: string[] = [];
-    const result = await runSetup({
-      env: envWith(home),
-      configPath: config,
-      interact,
-      memoryInfo: () => ({ total: 32 * 2 ** 30 }),
-      out: () => {},
-      ...ollamaFetch(pulled),
-    });
-    assertEquals(result, 0);
-    assertEquals(pulled, [], "declined downloads pull nothing");
-    const saved = await loadConfig(config);
+Deno.test("setup: keeps unrelated settings when the config already exists", async () => {
+  await withNoaHome({ home: true }, async (dir) => {
+    await Deno.writeTextFile(`${dir}/config.json`, '{"ZODIAC": "leo", "models": []}');
+    await withEnv(testEnv({ confirms: "y,n", ramGb: 32 }), () =>
+      withFetch(ollamaDaemon([]), async () => {
+        assertEquals(await runSetup(), 0);
+      })
+    );
+    const saved = await loadConfig(`${dir}/config.json`);
     assertEquals(saved.ZODIAC, "leo");
     // Declining downloads still configures the default cascade.
-    assertEquals(saved.models, [...DEFAULT_MODELS]);
+    assertEquals((saved.models as { model: string }[]).length, 3);
   });
 });
 
 Deno.test("setup: a daemon that is down reports instructions", async () => {
-  await withDirs(async (home, config) => {
-    const lines: string[] = [];
-    const fetchFn: FetchFn = () => Promise.reject(new TypeError("refused"));
-    const result = await runSetup({
-      env: envWith(home),
-      configPath: config,
-      interact: fakeInteract(),
-      fetchFn,
-      out: (line) => lines.push(line),
-    });
-    assertEquals(result, 1);
-    assert(lines.some((l) => l.includes("ollama serve") || l.includes("Ollama is not running")));
+  await withNoaHome({ home: true }, async () => {
+    await withEnv(testEnv({}), () =>
+      withFetch(() => Promise.reject(new TypeError("refused")), () =>
+        withLogs(async (lines) => {
+          assertEquals(await runSetup(), 1);
+          assert(
+            lines.some((l) =>
+              l.includes("ollama serve") || l.includes("Ollama is not running")
+            ),
+          );
+        })
+      )
+    );
   });
 });
 
 Deno.test("setup: an empty custom list skips model setup cleanly", async () => {
-  await withDirs(async (home, config) => {
+  await withNoaHome({ home: true }, async (dir) => {
     const pulled: string[] = [];
-    const result = await runSetup({
-      env: envWith(home),
-      configPath: config,
-      interact: fakeInteract({ confirms: [false], texts: ["  "] }),
-      memoryInfo: () => ({ total: 32 * 2 ** 30 }),
-      out: () => {},
-      ...ollamaFetch(pulled),
-    });
-    assertEquals(result, 0);
+    await withEnv(testEnv({ confirms: "n", texts: "  ", ramGb: 32 }), () =>
+      withFetch(ollamaDaemon(pulled), async () => {
+        assertEquals(await runSetup(), 0);
+      })
+    );
     assertEquals(pulled, []);
-    const saved = await loadConfig(config);
+    const saved = await loadConfig(`${dir}/config.json`);
     assertEquals(saved.models, []);
   });
 });

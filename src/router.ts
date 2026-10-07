@@ -78,7 +78,8 @@ export interface CascadeDeps {
   /** Skip the verification pass (`--no-verify`). */
   readonly noVerify?: boolean;
   /** Log sink (stderr in the CLI). */
-  readonly onLog?: (message: string) => void;
+  /** Log every routing decision to stderr when true. */
+  readonly debug?: boolean;
   /** Max tool rounds per local answer; defaults to 6. */
   readonly maxToolRounds?: number;
 }
@@ -88,13 +89,16 @@ const AGENT_SYSTEM = `You are a local coding assistant with a run_command tool t
 /**
  * Routes a question through the cascade:
  * judge → local tier (with tools) → verify → escalate → cloud.
- * Returns the final answer; logs every routing decision via `onLog`.
+ * Returns the final answer; logs every routing decision to stderr
+ * when `debug` is set.
  */
 export async function cascade(
   question: string,
   deps: CascadeDeps,
 ): Promise<string> {
-  const log = deps.onLog ?? (() => {});
+  const log = deps.debug === true
+    ? (message: string) => console.error(message)
+    : () => {};
   const clouds = deps.clouds ?? [];
   const localTiers = deps.localTiers ?? [];
   const targets = deps.tierTargets ?? {};
