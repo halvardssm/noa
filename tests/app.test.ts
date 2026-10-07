@@ -131,7 +131,7 @@ Deno.test("app: ask routes through the local cascade end to end", async () => {
   assert(seen.includes("ministral-3:3b"));
 });
 
-Deno.test("app: forced mistral without a key gives the config remedy", async () => {
+Deno.test("app: forced mistral without a key gives the export remedy", async () => {
   const app = await createApp({
     env: envWith({}),
     fileValues: {},
@@ -139,7 +139,18 @@ Deno.test("app: forced mistral without a key gives the config remedy", async () 
     onLog: () => {},
   });
   const error = await assertRejects(() => app.ask("hard task"), Error);
-  assert(error.message.includes("noa config set MISTRAL_API_KEY"));
+  assert(error.message.includes("export MISTRAL_API_KEY"));
+});
+
+Deno.test("app: keys stored in the config file are ignored with a warning", async () => {
+  const logs: string[] = [];
+  const app = await createApp({
+    env: envWith({}),
+    fileValues: { MISTRAL_API_KEY: "legacy-stored-key" },
+    onLog: (m) => logs.push(m),
+  });
+  assert(logs.some((l) => l.includes("MISTRAL_API_KEY in config.json is ignored")));
+  assertEquals(app.allowTools, []);
 });
 
 Deno.test("app: forced mistral receives the raw question (no upgrade steps)", async () => {

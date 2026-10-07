@@ -6,10 +6,22 @@ import type { FetchFn } from "./http.ts";
  */
 export interface CloudProvider {
   readonly name: string;
-  /** The .env setting that must exist for this provider to be configured. */
+  /** The environment variable this provider reads its key from. */
   readonly keySetting: string;
   /** Answers the prompt; `model` overrides the provider's default. */
   chat(prompt: string, model?: string): Promise<string>;
+}
+
+/** Reads a secret at request time; defaults to the process environment. */
+export type ReadSecret = (name: string) => string | undefined;
+
+function envSecret(name: string): string | undefined {
+  return Deno.env.get(name);
+}
+
+/** The provider is configured when its key is present; nothing is stored. */
+export function hasKey(readSecret: ReadSecret, name: string): boolean {
+  return (readSecret(name) ?? "") !== "";
 }
 
 /** Error carrying a user-facing remedy, without a stack trace. */
@@ -22,10 +34,11 @@ export class ProviderError extends Error {
 
 /** Configuration of the Mistral provider. */
 export interface MistralConfig {
-  readonly apiKey: string;
   /** Model name; defaults to `mistral-large-latest`. */
   readonly model?: string;
   readonly fetchFn?: FetchFn;
+  /** Reads MISTRAL_API_KEY at request time; defaults to the environment. */
+  readonly readSecret?: ReadSecret;
 }
 
 /** Settings for a single Mistral Chat Completions call. */
@@ -38,9 +51,10 @@ const MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions";
 
 /** Calls the Mistral Chat Completions API. */
 export async function mistralChat(options: MistralOptions): Promise<string> {
-  if (options.apiKey === "") {
+  const apiKey = (options.readSecret ?? envSecret)("MISTRAL_API_KEY") ?? "";
+  if (apiKey === "") {
     throw new ProviderError(
-      "MISTRAL_API_KEY is not set — run `noa config set MISTRAL_API_KEY`",
+      "MISTRAL_API_KEY is not set — export it in your shell environment",
     );
   }
   const fetchFn = options.fetchFn ?? fetch;
@@ -53,7 +67,7 @@ export async function mistralChat(options: MistralOptions): Promise<string> {
     response = await fetchFn(MISTRAL_URL, {
       method: "POST",
       headers: {
-        "authorization": `Bearer ${options.apiKey}`,
+        "authorization": `Bearer ${apiKey}`,
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
@@ -65,7 +79,7 @@ export async function mistralChat(options: MistralOptions): Promise<string> {
   }
   if (response.status === 401 || response.status === 403) {
     throw new ProviderError(
-      "Mistral rejected the key — run `noa config set MISTRAL_API_KEY`",
+      "Mistral rejected MISTRAL_API_KEY — check the value you exported",
     );
   }
   if (!response.ok) {
@@ -92,10 +106,11 @@ export function mistralProvider(config: MistralConfig): CloudProvider {
 
 /** Configuration of the Anthropic provider. */
 export interface AnthropicConfig {
-  readonly apiKey: string;
   /** Model name; defaults to `claude-sonnet-4-5`. */
   readonly model?: string;
   readonly fetchFn?: FetchFn;
+  /** Reads ANTHROPIC_API_KEY at request time; defaults to the environment. */
+  readonly readSecret?: ReadSecret;
 }
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -104,9 +119,10 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 export async function anthropicChat(
   options: { prompt: string } & AnthropicConfig,
 ): Promise<string> {
-  if (options.apiKey === "") {
+  const apiKey = (options.readSecret ?? envSecret)("ANTHROPIC_API_KEY") ?? "";
+  if (apiKey === "") {
     throw new ProviderError(
-      "ANTHROPIC_API_KEY is not set — run `noa config set ANTHROPIC_API_KEY`",
+      "ANTHROPIC_API_KEY is not set — export it in your shell environment",
     );
   }
   const fetchFn = options.fetchFn ?? fetch;
@@ -120,7 +136,7 @@ export async function anthropicChat(
     response = await fetchFn(ANTHROPIC_URL, {
       method: "POST",
       headers: {
-        "x-api-key": options.apiKey,
+        "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
       },
@@ -133,7 +149,7 @@ export async function anthropicChat(
   }
   if (response.status === 401 || response.status === 403) {
     throw new ProviderError(
-      "Anthropic rejected the key — run `noa config set ANTHROPIC_API_KEY`",
+      "Anthropic rejected ANTHROPIC_API_KEY — check the value you exported",
     );
   }
   if (!response.ok) {

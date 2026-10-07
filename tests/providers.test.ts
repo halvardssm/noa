@@ -121,7 +121,7 @@ Deno.test("mistral: sends the chat completion request with auth", async () => {
   };
   const answer = await mistralChat({
     prompt: "improved prompt",
-    apiKey: "sk-test",
+    readSecret: () => "sk-test",
     fetchFn,
   });
   assertEquals(answer, "cloud answer");
@@ -136,7 +136,7 @@ Deno.test("mistral: sends the chat completion request with auth", async () => {
 Deno.test("mistral: model is configurable", async () => {
   const fetchFn: FetchFn = async () =>
     jsonResponse({ choices: [{ message: { content: "x" } }] });
-  await mistralChat({ prompt: "p", apiKey: "k", model: "mistral-small-latest", fetchFn });
+  await mistralChat({ prompt: "p", readSecret: () => "k", model: "mistral-small-latest", fetchFn });
 });
 
 Deno.test("mistral: missing key fails before any request", async () => {
@@ -145,18 +145,19 @@ Deno.test("mistral: missing key fails before any request", async () => {
     called = true;
     return jsonResponse({});
   };
-  await assertRejects(
-    () => mistralChat({ prompt: "p", apiKey: "", fetchFn }),
+  const error = await assertRejects(
+    () => mistralChat({ prompt: "p", readSecret: () => undefined, fetchFn }),
     Error,
-    "MISTRAL_API_KEY",
   );
+  assert(error.message.includes("MISTRAL_API_KEY"));
+  assert(error.message.includes("export it in your shell"));
   assert(!called);
 });
 
 Deno.test("mistral: auth errors name the key setting", async () => {
   const fetchFn: FetchFn = async () => jsonResponse({ message: "bad key" }, 401);
   await assertRejects(
-    () => mistralChat({ prompt: "p", apiKey: "wrong", fetchFn }),
+    () => mistralChat({ prompt: "p", readSecret: () => "wrong", fetchFn }),
     Error,
     "MISTRAL_API_KEY",
   );
@@ -170,7 +171,7 @@ Deno.test("anthropic: sends the messages request with the right headers", async 
   };
   const answer = await anthropicChat({
     prompt: "improved prompt",
-    apiKey: "sk-ant-test",
+    readSecret: () => "sk-ant-test",
     fetchFn,
   });
   assertEquals(answer, "claude answer");
@@ -190,7 +191,7 @@ Deno.test("anthropic: missing key fails before any request", async () => {
     return jsonResponse({});
   };
   await assertRejects(
-    () => anthropicChat({ prompt: "p", apiKey: "", fetchFn }),
+    () => anthropicChat({ prompt: "p", readSecret: () => undefined, fetchFn }),
     Error,
     "ANTHROPIC_API_KEY",
   );
@@ -200,7 +201,7 @@ Deno.test("anthropic: missing key fails before any request", async () => {
 Deno.test("anthropic: auth errors name the key setting", async () => {
   const fetchFn: FetchFn = async () => jsonResponse({ message: "bad" }, 401);
   await assertRejects(
-    () => anthropicChat({ prompt: "p", apiKey: "wrong", fetchFn }),
+    () => anthropicChat({ prompt: "p", readSecret: () => "wrong", fetchFn }),
     Error,
     "ANTHROPIC_API_KEY",
   );

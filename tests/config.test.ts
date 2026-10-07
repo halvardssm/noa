@@ -71,10 +71,10 @@ Deno.test("setConfigValue: creates the file with mode 600 and parent dirs", asyn
   const dir = await Deno.makeTempDir();
   try {
     const path = `${dir}/nested/noa/config.json`;
-    await setConfigValue(path, "MISTRAL_API_KEY", "abc123");
+    await setConfigValue(path, "ZODIAC", "leo");
     const stat = await Deno.stat(path);
     assertEquals(stat.mode !== null && (stat.mode & 0o777), 0o600);
-    assertEquals(await loadConfig(path), { MISTRAL_API_KEY: "abc123" });
+    assertEquals(await loadConfig(path), { ZODIAC: "leo" });
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -84,11 +84,11 @@ Deno.test("setConfigValue: updates only the named key, preserving others", async
   const dir = await Deno.makeTempDir();
   try {
     const path = `${dir}/config.json`;
-    await setConfigValue(path, "ANTHROPIC_API_KEY", "sk-ant-1");
+    await setConfigValue(path, "ZODIAC", "leo-1");
     await setConfigValue(path, "NOA_TOOLS", "git,rg");
-    await setConfigValue(path, "ANTHROPIC_API_KEY", "sk-ant-2");
+    await setConfigValue(path, "ZODIAC", "leo-2");
     assertEquals(await loadConfig(path), {
-      ANTHROPIC_API_KEY: "sk-ant-2",
+      ZODIAC: "leo-2",
       NOA_TOOLS: "git,rg",
     });
   } finally {
@@ -107,6 +107,17 @@ Deno.test("setConfigValue: tightens loose permissions and rejects models/invalid
     assertEquals(stat.mode !== null && (stat.mode & 0o777), 0o600);
     await assertRejects(() => setConfigValue(path, "models", "x"), TypeError);
     await assertRejects(() => setConfigValue(path, "BAD KEY", "x"), TypeError);
+    // Secrets are never stored.
+    await assertRejects(
+      () => setConfigValue(path, "MISTRAL_API_KEY", "sk"),
+      TypeError,
+      "secrets are not stored",
+    );
+    await assertRejects(
+      () => setConfigValue(path, "MY_TOKEN", "t"),
+      TypeError,
+      "secrets are not stored",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -134,16 +145,13 @@ Deno.test("ensureConfig: migrates a legacy .env once, leaving it untouched", asy
     const legacy = `${dir}/.env`;
     await Deno.writeTextFile(legacy, "ZODIAC=leo\nMISTRAL_API_KEY=sk-1\n");
     assertEquals(await ensureConfig(path, legacy), true);
-    assertEquals(await loadConfig(path), {
-      ZODIAC: "leo",
-      MISTRAL_API_KEY: "sk-1",
-    });
+    // Secrets never migrate into the config file.
+    assertEquals(await loadConfig(path), { ZODIAC: "leo" });
     // Second run: config exists, no changes.
     await setConfigValue(path, "EXTRA", "1");
     assertEquals(await ensureConfig(path, legacy), false);
     assertEquals(await loadConfig(path), {
       ZODIAC: "leo",
-      MISTRAL_API_KEY: "sk-1",
       EXTRA: "1",
     });
     assertEquals(await Deno.readTextFile(legacy), "ZODIAC=leo\nMISTRAL_API_KEY=sk-1\n");

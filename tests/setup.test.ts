@@ -207,36 +207,30 @@ Deno.test("setup: custom path asks for an ordered list and descriptions", async 
   });
 });
 
-Deno.test("setup: prompts for keys only when the config does not exist", async () => {
+Deno.test("setup: never prompts for keys, prints the environment hint", async () => {
   await withDirs(async (home, config) => {
-    const interact = fakeInteract({
-      confirms: [true, false],
-      secrets: ["sk-mistral", "sk-ant"],
-    });
+    const interact = fakeInteract({ confirms: [true, false] });
     const pulled: string[] = [];
+    const lines: string[] = [];
     const result = await runSetup({
       env: envWith(home),
       configPath: config,
       interact,
       memoryInfo: () => ({ total: 32 * 2 ** 30 }),
-      out: () => {},
+      out: (line) => lines.push(line),
       ...ollamaFetch(pulled),
     });
     assertEquals(result, 0);
-    assert(interact.secrets.some((s) => s.includes("Mistral")));
-    assert(interact.secrets.some((s) => s.includes("Anthropic")));
-    const saved = await loadConfig(config);
-    assertEquals(saved.MISTRAL_API_KEY, "sk-mistral");
-    assertEquals(saved.ANTHROPIC_API_KEY, "sk-ant");
+    assertEquals(interact.secrets.length, 0, "no key prompts at all");
+    assert(lines.some((l) => l.includes("export MISTRAL_API_KEY")));
+    const saved = await Deno.readTextFile(config);
+    assert(!saved.includes("API_KEY"));
   });
 });
 
-Deno.test("setup: leaves keys untouched when the config exists", async () => {
+Deno.test("setup: still no key prompting when the config already exists", async () => {
   await withDirs(async (home, config) => {
-    await Deno.writeTextFile(
-      config,
-      '{"MISTRAL_API_KEY": "existing", "models": []}',
-    );
+    await Deno.writeTextFile(config, '{"ZODIAC": "leo", "models": []}');
     const interact = fakeInteract({ confirms: [true, false] });
     const pulled: string[] = [];
     const result = await runSetup({
@@ -250,7 +244,7 @@ Deno.test("setup: leaves keys untouched when the config exists", async () => {
     assertEquals(result, 0);
     assertEquals(interact.secrets.length, 0);
     const saved = await loadConfig(config);
-    assertEquals(saved.MISTRAL_API_KEY, "existing");
+    assertEquals(saved.ZODIAC, "leo");
     assertEquals(saved.models, []);
   });
 });

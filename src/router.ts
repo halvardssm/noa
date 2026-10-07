@@ -109,7 +109,7 @@ export async function cascade(
           ? "ANTHROPIC_API_KEY"
           : "MISTRAL_API_KEY";
         throw new Error(
-          `${forced.provider} is not configured — run \`noa config set ${setting}\``,
+          `${forced.provider} is not configured — export ${setting} in your shell`,
         );
       }
       const model = forced.model !== undefined ? ` ${forced.model}` : "";
@@ -206,7 +206,7 @@ export async function cascade(
     if (tier === "cloud") {
       if (clouds.length === 0) {
         throw new Error(
-          "no local model passed verification and no cloud provider is configured — run `noa config set MISTRAL_API_KEY` (or ANTHROPIC_API_KEY)",
+          "no local model passed verification and no cloud provider is configured — export MISTRAL_API_KEY (or ANTHROPIC_API_KEY) in your shell",
         );
       }
       return cloudChain(judgment.improvedPrompt, clouds, undefined, log);

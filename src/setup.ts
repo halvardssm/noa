@@ -3,7 +3,6 @@ import {
   configPath,
   DEFAULT_MODELS,
   ModelEntry,
-  setConfigValue,
   writeModels,
 } from "./config.ts";
 import type { FetchFn } from "./http.ts";
@@ -153,25 +152,11 @@ export async function runSetup(options: SetupOptions): Promise<number> {
     }
   }
 
-  if (!configExisted) {
-    out(`configuring API keys (stored in ${path}, chmod 600)`);
-    for (
-      const [key, label] of [
-        ["MISTRAL_API_KEY", "Mistral"],
-        ["ANTHROPIC_API_KEY", "Anthropic"],
-      ] as const
-    ) {
-      const value = await options.interact.secret(
-        `${label} API key (empty to skip):`,
-      );
-      if (value !== null && value !== "") {
-        await setConfigValue(path, key, value);
-        out(`set ${key}`);
-      }
-    }
-  } else {
-    out(`config already exists at ${path} — leaving keys untouched`);
-  }
+  // API keys are never stored: they are read from the environment at
+  // request time and attached directly to the provider request.
+  out(
+    "cloud API keys come from your shell environment — export MISTRAL_API_KEY and/or ANTHROPIC_API_KEY to enable cloud tiers",
+  );
 
   out("setup complete — try: noa what is 2+2");
   return 0;

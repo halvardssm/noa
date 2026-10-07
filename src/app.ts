@@ -8,7 +8,7 @@ import {
   type ModelEntry,
 } from "./config.ts";
 import { ollamaChat } from "./ollama.ts";
-import { anthropicProvider, mistralProvider } from "./cloud.ts";
+import { anthropicProvider, hasKey, mistralProvider, type CloudProvider } from "./cloud.ts";
 import type { Tier } from "./judge.ts";
 import type { TierTarget } from "./router.ts";
 import { createGate, type Gate } from "./tools.ts";
@@ -165,8 +165,19 @@ export async function createApp(options: AppOptions): Promise<App> {
       });
     };
 
-  const apiKey = (name: string): string =>
-    options.env.get(name) ?? stringSetting(options.fileValues, name) ?? "";
+  // Secrets are never stored: providers read their keys from the
+  // environment at request time and attach them directly to the request.
+  const readSecret = (name: string): string | undefined =>
+    options.env.get(name);
+
+  // Warn about legacy keys that are still sitting in the config file.
+  for (const key of ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY"]) {
+    if (stringSetting(options.fileValues, key) !== undefined) {
+      options.onLog(
+        `${key} in config.json is ignored — export it in your shell instead`,
+      );
+    }
+  }
 
   /** Cloud providers in the user's preferred order (NOA_CLOUD). */
   const cloudOrder = (options.env.get("NOA_CLOUD") ??
@@ -174,24 +185,24 @@ export async function createApp(options: AppOptions): Promise<App> {
     .split(",")
     .map((name) => name.trim())
     .filter((name) => name !== "");
-  const clouds = [];
+  const clouds: CloudProvider[] = [];
   for (const name of cloudOrder) {
-    if (name === "mistral" && apiKey("MISTRAL_API_KEY") !== "") {
+    if (name === "mistral" && hasKey(readSecret, "MISTRAL_API_KEY")) {
       clouds.push(
         mistralProvider({
-          apiKey: apiKey("MISTRAL_API_KEY"),
           model: options.env.get("NOA_MISTRAL_MODEL") ??
             stringSetting(options.fileValues, "NOA_MISTRAL_MODEL"),
           fetchFn: options.fetchFn,
+          readSecret,
         }),
       );
-    } else if (name === "anthropic" && apiKey("ANTHROPIC_API_KEY") !== "") {
+    } else if (name === "anthropic" && hasKey(readSecret, "ANTHROPIC_API_KEY")) {
       clouds.push(
         anthropicProvider({
-          apiKey: apiKey("ANTHROPIC_API_KEY"),
           model: options.env.get("NOA_ANTHROPIC_MODEL") ??
             stringSetting(options.fileValues, "NOA_ANTHROPIC_MODEL"),
           fetchFn: options.fetchFn,
+          readSecret,
         }),
       );
     }

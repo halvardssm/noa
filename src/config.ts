@@ -159,7 +159,11 @@ export async function ensureConfig(
     string
   >;
   const config: NoaConfig = {};
-  for (const [key, value] of Object.entries(values)) config[key] = value;
+  for (const [key, value] of Object.entries(values)) {
+    // Secrets are never stored; they are read from the environment.
+    if (isSecretKey(key)) continue;
+    config[key] = value;
+  }
   await writeConfig(path, config);
   return true;
 }
@@ -181,6 +185,11 @@ export async function setConfigValue(
   if (key === "models") {
     throw new TypeError(
       "models are a list — edit config.json directly or rerun `noa setup`",
+    );
+  }
+  if (isSecretKey(key)) {
+    throw new TypeError(
+      `secrets are not stored — export ${key} in your shell instead`,
     );
   }
   if (!validKey(key)) {

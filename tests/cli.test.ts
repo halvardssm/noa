@@ -59,29 +59,34 @@ Deno.test("cli: --allow-tools sets the allowlist for this invocation", async () 
   });
 });
 
-Deno.test("cli: config set/get/list/unset round-trip with masking", async () => {
+Deno.test("cli: config set/get/list/unset round-trip; secrets are refused", async () => {
   await withHome(async (home) => {
-    const set = await runCli(["config", "set", "MISTRAL_API_KEY", "sk-secret"], { NOA_HOME: home });
+    const set = await runCli(["config", "set", "ZODIAC", "leo"], { NOA_HOME: home });
     assertEquals(set.code, 0);
     const stat = await Deno.stat(`${home}/config.json`);
     assertEquals(stat.mode !== null && (stat.mode & 0o777), 0o600);
 
-    const get = await runCli(["config", "get", "MISTRAL_API_KEY"], { NOA_HOME: home });
-    assertEquals(get.stdout.trim(), "********");
-    const getShow = await runCli(
-      ["config", "get", "MISTRAL_API_KEY", "--show"],
-      { NOA_HOME: home },
-    );
-    assertEquals(getShow.stdout.trim(), "sk-secret");
+    const get = await runCli(["config", "get", "ZODIAC"], { NOA_HOME: home });
+    assertEquals(get.stdout.trim(), "leo");
 
     const listed = await runCli(["config", "list"], { NOA_HOME: home });
-    assertEquals(listed.stdout.trim(), "MISTRAL_API_KEY=********");
+    assertEquals(listed.stdout.trim(), "ZODIAC=leo");
 
-    const unset = await runCli(["config", "unset", "MISTRAL_API_KEY"], { NOA_HOME: home });
+    const unset = await runCli(["config", "unset", "ZODIAC"], { NOA_HOME: home });
     assertEquals(unset.code, 0);
-    const gone = await runCli(["config", "get", "MISTRAL_API_KEY"], { NOA_HOME: home });
+    const gone = await runCli(["config", "get", "ZODIAC"], { NOA_HOME: home });
     assertEquals(gone.code, 1);
     assert(gone.stderr.includes("not set"));
+
+    // Secrets are never stored.
+    const secret = await runCli(
+      ["config", "set", "MISTRAL_API_KEY", "sk-secret"],
+      { NOA_HOME: home },
+    );
+    assert(secret.code !== 0);
+    assert(secret.stderr.includes("secrets are not stored"));
+    const stored = await Deno.readTextFile(`${home}/config.json`);
+    assert(!stored.includes("sk-secret"));
   });
 });
 
