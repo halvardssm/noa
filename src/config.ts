@@ -5,7 +5,7 @@ import { z } from "zod";
  * The tool allowlist example, shown in the CLI help so the user can set it
  * themselves (security rule 3: no allowlist is granted by default).
  */
-export const SUGGESTED_TOOLS = "ls,cat,head,tail,wc,grep,find,jq,curl";
+export const SUGGESTED_TOOLS = "ls,cat,head,tail,wc,grep,find,jq,curl,date";
 
 /** One entry of the user-defined local model cascade. */
 export interface ModelEntry {

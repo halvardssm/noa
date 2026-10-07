@@ -42,7 +42,7 @@ Deno.test("resolveList: trims entries, drops empties, dedupes", () => {
 });
 
 Deno.test("SUGGESTED_TOOLS: is the example shown in the CLI help", () => {
-  assertEquals(SUGGESTED_TOOLS, "ls,cat,head,tail,wc,grep,find,jq,curl");
+  assertEquals(SUGGESTED_TOOLS, "ls,cat,head,tail,wc,grep,find,jq,curl,date");
 });
 
 Deno.test("defaultAllowPaths: is the current directory", () => {

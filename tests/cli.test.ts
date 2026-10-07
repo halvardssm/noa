@@ -41,20 +41,20 @@ Deno.test("cli: --tools prints nothing unconfigured, with a hint on stderr", asy
     assertEquals(result.code, 0);
     assertEquals(result.stdout, "");
     assert(result.stderr.includes("--allow-tools"));
-    assert(result.stderr.includes("ls,cat,head,tail,wc,grep,find,jq,curl"));
+    assert(result.stderr.includes("ls,cat,head,tail,wc,grep,find,jq,curl,date"));
   });
 });
 
 Deno.test("cli: --allow-tools sets the allowlist for this invocation", async () => {
   await withHome(async (home) => {
     const result = await runCli(
-      ["--allow-tools", "ls,cat,head,tail,wc,grep,find,jq,curl", "--tools"],
+      ["--allow-tools", "ls,cat,head,tail,wc,grep,find,jq,curl,date", "--tools"],
       { NOA_HOME: home },
     );
     assertEquals(result.code, 0);
     assertEquals(
       result.stdout.trim().split("\n"),
-      ["ls", "cat", "head", "tail", "wc", "grep", "find", "jq", "curl"],
+      ["ls", "cat", "head", "tail", "wc", "grep", "find", "jq", "curl", "date"],
     );
   });
 });

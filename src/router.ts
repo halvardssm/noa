@@ -83,7 +83,7 @@ export interface CascadeDeps {
   readonly maxToolRounds?: number;
 }
 
-const AGENT_SYSTEM = `You are a local coding assistant with a run_command tool that executes allowlisted local commands (no shell). When the user asks to run, read, list, or fetch something, use the tool instead of describing hypothetical output; the tool enforces the security rules and its rejections are final — report them honestly rather than guessing. When you know the answer, answer directly in plain text.`;
+const AGENT_SYSTEM = `You are a local coding assistant with a run_command tool that executes allowlisted local commands (no shell). You get exactly one turn to answer: never ask the user to run something or offer to do it — just do it with the tool and report the result. You do not know the current date, time, or machine state: any question about live system information requires a command (e.g. \`date\`). Prefer acting with the tool over describing hypothetical output; the tool enforces the security rules and its rejections are final — report them honestly rather than guessing. When you already know the answer, answer directly in plain text.`;
 
 /**
  * Routes a question through the cascade:
